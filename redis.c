@@ -1725,7 +1725,7 @@ PHPAPI int generic_multiple_args_cmd(INTERNAL_FUNCTION_PARAMETERS, char *keyword
             zend_hash_move_forward(keytable), i++) {
 
             char *key;
-            int key_len;
+            unsigned int key_len;
             unsigned long idx;
             int type;
             zval **z_value_pp;
@@ -2032,7 +2032,7 @@ PHP_METHOD(Redis, sort) {
                     zend_hash_move_forward(keytable)) {
 
                     char *key, *val;
-                    int key_len, val_len;
+                    unsigned int key_len, val_len;
                     unsigned long idx;
                     int type;
                     zval **z_value_pp;
@@ -2726,7 +2726,7 @@ PHP_METHOD(Redis, mset) {
         zend_hash_move_forward(keytable)) {
 
         char *key, *val;
-        int key_len, val_len;
+        unsigned int key_len, val_len;
         unsigned long idx;
         int type;
         zval **z_value_pp;
@@ -3639,7 +3639,7 @@ PHPAPI void array_zip_values_and_scores(zval *z_tab, int use_atof TSRMLS_DC) {
         zend_hash_move_forward(keytable)) {
 
         char *tablekey, *hkey, *hval;
-        int tablekey_len, hkey_len, hval_len;
+        unsigned int tablekey_len, hkey_len, hval_len;
         unsigned long idx;
         int type;
         zval **z_value_pp;
