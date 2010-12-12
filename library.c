@@ -1,5 +1,8 @@
+#include "php_redis.h"
+#include "library.h"
 #include "common.h"
 #include "php_network.h"
+#include "zend_exceptions.h"
 #include <sys/types.h>
 #include <netinet/tcp.h>  /* TCP_NODELAY */
 #include <sys/socket.h>
