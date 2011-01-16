@@ -586,12 +586,11 @@ PHPAPI void redis_long_response(INTERNAL_FUNCTION_PARAMETERS, RedisSock *redis_s
 
     if(response[0] == ':') {
         long ret = atol(response + 1);
+        efree(response);
         IF_MULTI_OR_PIPELINE() {
-            efree(response);
             add_next_index_long(z_tab, ret);
         } else {
-			response[0] = '\0';
-			RETURN_STRINGL(response, response_len, 0);
+			RETURN_LONG(ret);
 		}
     } else {
         efree(response);
