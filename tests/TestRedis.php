@@ -1,9 +1,10 @@
 <?php
-require_once 'PHPUnit/Framework/TestCase.php';
+
+require_once(dirname($_SERVER['PHP_SELF'])."/test.php");
 
 echo "Note: these tests might take up to a minute. Don't worry :-)\n";
 
-class Redis_Test extends PHPUnit_Framework_TestCase
+class Redis_Test extends TestSuite
 {
 	const HOST = '127.0.0.1';
 	const PORT = 6379;
@@ -17,9 +18,11 @@ class Redis_Test extends PHPUnit_Framework_TestCase
     public function setUp()
     {
 	$this->redis = $this->newInstance();
+	$info = $this->redis->info();
+	$this->version = (isset($info['redis_version'])?$info['redis_version']:'0.0.0');
     }
 
-    private function newInstance() {
+	private function newInstance() {
 	$r = new Redis();
 	$r->connect(self::HOST, self::PORT);
 
@@ -34,13 +37,19 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	if($this->redis) {
 	    $this->redis->close();
 	}
-        unset($this->redis);
+   //     unset($this->redis);
     }
 
     public function reset()
     {
         $this->setUp();
         $this->tearDown();
+    }
+
+    public function testMinimumVersion()
+    {
+	// Minimum server version required for tests
+	$this->assertTrue(version_compare($this->version, "2.4.0", "ge"));
     }
 
     public function testPing()
@@ -52,8 +61,16 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	while($count --) {
 	    	$this->assertEquals('+PONG', $this->redis->ping());
 	}
-
     }
+
+	public function testPipelinePublish() {
+
+		$ret = $this->redis->pipeline()
+			->publish('chan', 'msg')
+			->exec();
+
+		$this->assertTrue(is_array($ret) && count($ret) === 1 && $ret[0] >= 0);
+	}
 
     public function testBitsets() {
 
@@ -105,6 +122,12 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	 $this->redis->set('x', $s);
 	 $this->assertEquals($s, $this->redis->get('x'));
     }
+
+	public function testEcho() {
+		$this->assertEquals($this->redis->echo("hello"), "hello");
+		$this->assertEquals($this->redis->echo(""), "");
+		$this->assertEquals($this->redis->echo(" 0123 "), " 0123 ");
+	}
 
     public function testErr() {
 
@@ -213,12 +236,20 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	$this->assertTrue($this->redis->lGetRange('key0', 0, -1) === array());
 	$this->assertTrue($this->redis->lGetRange('key1', 0, -1) === array('val1', 'val0'));
 
+	// variadic
+	$this->redis->delete('key0');
+	$this->assertTrue(3 === $this->redis->lPush('key0', 'val0', 'val1', 'val2'));
+	$this->assertTrue(array('val2', 'val1', 'val0') === $this->redis->lrange('key0', 0, -1));
+
+	$this->redis->delete('key0');
+	$this->assertTrue(3 === $this->redis->rPush('key0', 'val0', 'val1', 'val2'));
+	$this->assertTrue(array('val0', 'val1', 'val2') === $this->redis->lrange('key0', 0, -1));
     }
 
     public function testRenameNx() {
 
 	// strings
-	$this->redis->delete('key0');
+	$this->redis->delete('key0', 'key1');
 	$this->redis->set('key0', 'val0');
 	$this->redis->set('key1', 'val1');
 	$this->assertTrue($this->redis->renameNx('key0', 'key1') === FALSE);
@@ -232,12 +263,12 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	$this->redis->lPush('key0', 'val1');
 	$this->redis->lPush('key1', 'val1-0');
 	$this->redis->lPush('key1', 'val1-1');
-	$this->redis->renameNx('key0', 'key1');
+	$this->assertTrue($this->redis->renameNx('key0', 'key1') === FALSE);
 	$this->assertTrue($this->redis->lGetRange('key0', 0, -1) === array('val1', 'val0'));
 	$this->assertTrue($this->redis->lGetRange('key1', 0, -1) === array('val1-1', 'val1-0'));
 
 	$this->redis->delete('key2');
-	$this->redis->renameNx('key0', 'key2');
+	$this->assertTrue($this->redis->renameNx('key0', 'key2') === TRUE);
 	$this->assertTrue($this->redis->lGetRange('key0', 0, -1) === array());
 	$this->assertTrue($this->redis->lGetRange('key2', 0, -1) === array('val1', 'val0'));
 
@@ -326,22 +357,22 @@ class Redis_Test extends PHPUnit_Framework_TestCase
         $this->redis->set('key', 0);
 
         $this->redis->incr('key');
-	$this->assertEquals(1, $this->redis->get('key'));
+	$this->assertEquals(1, (int)$this->redis->get('key'));
 
         $this->redis->incr('key');
-	$this->assertEquals(2, $this->redis->get('key'));
+	$this->assertEquals(2, (int)$this->redis->get('key'));
 
-        $this->redis->incr('key', 3);
-	$this->assertEquals(5, $this->redis->get('key'));
+       $this->redis->incr('key', 3);
+	$this->assertEquals(5, (int)$this->redis->get('key'));
 
 	$this->redis->incrBy('key', 3);
-	$this->assertEquals(8, $this->redis->get('key'));
+	$this->assertEquals(8, (int)$this->redis->get('key'));
 
 	$this->redis->incrBy('key', 1);
-	$this->assertEquals(9, $this->redis->get('key'));
+	$this->assertEquals(9, (int)$this->redis->get('key'));
 
 	$this->redis->incrBy('key', -1);
-	$this->assertEquals(8, $this->redis->get('key'));
+	$this->assertEquals(8, (int)$this->redis->get('key'));
 
 	$this->redis->delete('key');
 
@@ -352,7 +383,35 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 
 	$this->redis->incr('key');
 	$this->assertTrue("abc" === $this->redis->get('key'));
+	}
 
+    public function testIncrByFloat()
+    {
+	// incrbyfloat is new in 2.6.0
+	if (version_compare($this->version, "2.5.0", "lt")) {
+		$this->markTestSkipped();
+	}
+
+	$this->redis->delete('key');
+
+	$this->redis->set('key', 0);
+
+	$this->redis->incrbyfloat('key', 1.5);
+	$this->assertEquals('1.5', $this->redis->get('key'));
+
+	$this->redis->incrbyfloat('key', 2.25);
+	$this->assertEquals('3.75', $this->redis->get('key'));
+
+	$this->redis->incrbyfloat('key', -2.25);
+	$this->assertEquals('1.5', $this->redis->get('key'));
+
+	$this->redis->set('key', 'abc');
+
+	$this->redis->incrbyfloat('key', 1.5);
+	$this->assertTrue("abc" === $this->redis->get('key'));
+
+	$this->redis->incrbyfloat('key', -1.5);
+	$this->assertTrue("abc" === $this->redis->get('key'));
     }
 
     public function testDecr()
@@ -360,25 +419,25 @@ class Redis_Test extends PHPUnit_Framework_TestCase
         $this->redis->set('key', 5);
 
         $this->redis->decr('key');
-	$this->assertEquals(4, $this->redis->get('key'));
+	$this->assertEquals(4, (int)$this->redis->get('key'));
 
         $this->redis->decr('key');
-	$this->assertEquals(3, $this->redis->get('key'));
+	$this->assertEquals(3, (int)$this->redis->get('key'));
 
         $this->redis->decr('key', 2);
-	$this->assertEquals(1, $this->redis->get('key'));
+	$this->assertEquals(1, (int)$this->redis->get('key'));
 
 	$this->redis->decr('key', 2);
-	$this->assertEquals(-1, $this->redis->get('key'));
+	$this->assertEquals(-1, (int)$this->redis->get('key'));
 
 	$this->redis->decrBy('key', 2);
-	$this->assertEquals(-3, $this->redis->get('key'));
+	$this->assertEquals(-3, (int)$this->redis->get('key'));
 
 	$this->redis->decrBy('key', 1);
-	$this->assertEquals(-4, $this->redis->get('key'));
+	$this->assertEquals(-4, (int)$this->redis->get('key'));
 
 	$this->redis->decr('key', -10);
-	$this->assertEquals(6, $this->redis->get('key'));
+	$this->assertEquals(6, (int)$this->redis->get('key'));
     }
 
     public function testExists()
@@ -416,27 +475,27 @@ class Redis_Test extends PHPUnit_Framework_TestCase
         $this->redis->set($key, 'val');
         $this->assertEquals('val', $this->redis->get($key));
 	$this->assertEquals(1, $this->redis->delete($key));
-        $this->assertEquals(null, $this->redis->get($key));
+        $this->assertEquals(false, $this->redis->get($key));
 
 	// multiple, all existing
 	$this->redis->set('x', 0);
 	$this->redis->set('y', 1);
 	$this->redis->set('z', 2);
 	$this->assertEquals(3, $this->redis->delete('x', 'y', 'z'));
-	$this->assertEquals(NULL, $this->redis->get('x'));
-	$this->assertEquals(NULL, $this->redis->get('y'));
-	$this->assertEquals(NULL, $this->redis->get('z'));
+	$this->assertEquals(false, $this->redis->get('x'));
+	$this->assertEquals(false, $this->redis->get('y'));
+	$this->assertEquals(false, $this->redis->get('z'));
 
 	// multiple, none existing
 	$this->assertEquals(0, $this->redis->delete('x', 'y', 'z'));
-	$this->assertEquals(NULL, $this->redis->get('x'));
-	$this->assertEquals(NULL, $this->redis->get('y'));
-	$this->assertEquals(NULL, $this->redis->get('z'));
+	$this->assertEquals(false, $this->redis->get('x'));
+	$this->assertEquals(false, $this->redis->get('y'));
+	$this->assertEquals(false, $this->redis->get('z'));
 
 	// multiple, some existing
 	$this->redis->set('y', 1);
 	$this->assertEquals(1, $this->redis->delete('x', 'y', 'z'));
-	$this->assertEquals(NULL, $this->redis->get('y'));
+	$this->assertEquals(false, $this->redis->get('y'));
 
 	$this->redis->set('x', 0);
 	$this->redis->set('y', 1);
@@ -467,6 +526,11 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	$this->redis->sAdd('keySet', 'val0');
 	$this->redis->sAdd('keySet', 'val1');
 	$this->assertEquals(Redis::REDIS_SET, $this->redis->type('keySet'));
+
+    // sadd with numeric key
+	$this->redis->delete(123);
+	$this->assertTrue(1 === $this->redis->sAdd(123, 'val0'));
+	$this->assertTrue(array('val0') === $this->redis->sMembers(123));
 
 	// zset
 	$this->redis->delete('keyZSet');
@@ -599,16 +663,16 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	// TODO: fix this broken test.
 //		$this->redis->delete('list');
 //		$params = array(
-//			0 => array("pipe", "r"), 
+//			0 => array("pipe", "r"),
 //			1 => array("pipe", "w"),
 //			2 => array("file", "/dev/null", "w")
 //		);
 //		if(function_exists('proc_open')) {
 //			$env = array('PHPREDIS_key' =>'list', 'PHPREDIS_value' => 'value');
 //			$process = proc_open('php', $params, $pipes, '/tmp', $env);
-//	
+//
 //			if (is_resource($process)) {
-//				fwrite($pipes[0],  '<?php 
+//				fwrite($pipes[0],  '<?php
 //	sleep(2);
 //	$r = new Redis;
 //	$r->connect("'.self::HOST.'", '.self::PORT.');
@@ -617,11 +681,11 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 //	}
 //	$r->lPush($_ENV["PHPREDIS_key"], $_ENV["PHPREDIS_value"]);
 //	?' . '>');
-//	
+//
 //				fclose($pipes[0]);
 //				fclose($pipes[1]);
 //				$re = proc_close($process);
-//	
+//
 //				$this->assertTrue($this->redis->blPop(array('list'), 5) === array("list", "value"));
 //			}
 //		}
@@ -656,8 +720,8 @@ class Redis_Test extends PHPUnit_Framework_TestCase
     }
 
     //lInsert, lPopx, rPopx
-    public function testlPopx() {	
-		//test lPushx/rPushx  
+    public function testlPopx() {
+		//test lPushx/rPushx
 		$this->redis->delete('keyNotExists');
 		$this->assertTrue($this->redis->lPushx('keyNotExists', 'value') === 0);
 		$this->assertTrue($this->redis->rPushx('keyNotExists', 'value') === 0);
@@ -732,6 +796,23 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 
     }
 
+    public function testSortPrefix() {
+	// Make sure that sorting works with a prefix
+        $this->redis->setOption(Redis::OPT_PREFIX, 'some-prefix:');
+        $this->redis->del('some-item');
+        $this->redis->sadd('some-item', 1);
+        $this->redis->sadd('some-item', 2);
+        $this->redis->sadd('some-item', 3);
+
+        $this->assertEquals(array('1','2','3'), $this->redis->sortAsc('some-item'));
+	$this->assertEquals(array('3','2','1'), $this->redis->sortDesc('some-item'));
+	$this->assertEquals(array('1','2','3'), $this->redis->sort('some-item'));
+
+	// Kill our set/prefix
+	$this->redis->del('some-item');
+	$this->redis->setOption(Redis::OPT_PREFIX, '');
+    }
+
     public function testSortAsc() {
 
 	$this->setupSort();
@@ -759,6 +840,8 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	$this->assertEquals(array_slice($byAgeAsc, 0, 3), $this->redis->sortAsc('person:id', 'person:age_*', 'person:name_*', NULL, 3)); // NULL is transformed to 0 if there is something after it.
 	$this->assertEquals($byAgeAsc, $this->redis->sortAsc('person:id', 'person:age_*', 'person:name_*', 0, 4));
 	$this->assertEquals($byAgeAsc, $this->redis->sort('person:id', array('by' => 'person:age_*', 'get' => 'person:name_*', 'limit' => array(0, 4))));
+	$this->assertEquals($byAgeAsc, $this->redis->sort('person:id', array('by' => 'person:age_*', 'get' => 'person:name_*', 'limit' => array(0, "4")))); // with strings
+	$this->assertEquals($byAgeAsc, $this->redis->sort('person:id', array('by' => 'person:age_*', 'get' => 'person:name_*', 'limit' => array("0", 4))));
 	$this->assertEquals(array(), $this->redis->sortAsc('person:id', 'person:age_*', 'person:name_*', NULL, NULL)); // NULL, NULL is the same as (0,0). That returns no element.
 
 	// sort by salary and get ages
@@ -779,8 +862,14 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	}
 
 	// SORT list → [ghi, def, abc]
-	$this->assertEquals(array_reverse($list), $this->redis->sortAsc('list'));
-	$this->assertEquals(array_reverse($list), $this->redis->sort('list', array('sort' => 'asc')));
+	if (version_compare($this->version, "2.5.0", "lt")) {
+		$this->assertEquals(array_reverse($list), $this->redis->sortAsc('list'));
+		$this->assertEquals(array_reverse($list), $this->redis->sort('list', array('sort' => 'asc')));
+	} else {
+		// TODO rewrite, from 2.6.0 release notes:
+		// SORT now will refuse to sort in numerical mode elements that can't be parsed
+		// as numbers
+	}
 
 	// SORT list ALPHA → [abc, def, ghi]
 	$this->assertEquals($list, $this->redis->sortAscAlpha('list'));
@@ -814,7 +903,13 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	}
 
 	// SORT list → [ghi, abc, def]
-	$this->assertEquals(array_reverse($list), $this->redis->sortDesc('list'));
+	if (version_compare($this->version, "2.5.0", "lt")) {
+		$this->assertEquals(array_reverse($list), $this->redis->sortDesc('list'));
+	} else {
+		// TODO rewrite, from 2.6.0 release notes:
+		// SORT now will refuse to sort in numerical mode elements that can't be parsed
+		// as numbers
+	}
 
 	// SORT list ALPHA → [abc, def, ghi]
 	$this->assertEquals(array('ghi', 'def', 'abc'), $this->redis->sortDescAlpha('list'));
@@ -892,13 +987,13 @@ class Redis_Test extends PHPUnit_Framework_TestCase
     {
         $this->redis->delete('set');
 
-	$this->assertEquals(TRUE, $this->redis->sAdd('set', 'val'));
-	$this->assertEquals(FALSE, $this->redis->sAdd('set', 'val'));
+	$this->assertEquals(1, $this->redis->sAdd('set', 'val'));
+	$this->assertEquals(0, $this->redis->sAdd('set', 'val'));
 
         $this->assertTrue($this->redis->sContains('set', 'val'));
         $this->assertFalse($this->redis->sContains('set', 'val2'));
 
-	$this->assertEquals(TRUE, $this->redis->sAdd('set', 'val2'));
+	$this->assertEquals(1, $this->redis->sAdd('set', 'val2'));
 
         $this->assertTrue($this->redis->sContains('set', 'val2'));
     }
@@ -906,11 +1001,11 @@ class Redis_Test extends PHPUnit_Framework_TestCase
     {
         $this->redis->delete('set');
 
-	$this->assertEquals(TRUE, $this->redis->sAdd('set', 'val'));
+	$this->assertEquals(1, $this->redis->sAdd('set', 'val'));
 
         $this->assertEquals(1, $this->redis->sSize('set'));
 
-	$this->assertEquals(TRUE, $this->redis->sAdd('set', 'val2'));
+	$this->assertEquals(1, $this->redis->sAdd('set', 'val2'));
 
         $this->assertEquals(2, $this->redis->sSize('set'));
     }
@@ -988,6 +1083,61 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	}
     }
 
+    public function testSRandMemberWithCount() {
+        // Make sure the set is nuked
+        $this->redis->delete('set0');
+        
+        // Run with a count (positive and negative) on an empty set
+        $ret_pos = $this->redis->sRandMember('set0', 10);
+        $ret_neg = $this->redis->sRandMember('set0', -10);
+        
+        // Should both be empty arrays
+        $this->assertTrue(is_array($ret_pos) && empty($ret_pos));
+        $this->assertTrue(is_array($ret_neg) && empty($ret_neg));
+
+        // Add a few items to the set
+        for($i=0;$i<100;$i++) {
+            $this->redis->sadd('set0', "member$i");
+        }
+
+        // Get less than the size of the list
+        $ret_slice = $this->redis->srandmember('set0', 20);
+
+        // Should be an array with 20 items
+        $this->assertTrue(is_array($ret_slice) && count($ret_slice) == 20);
+
+        // Ask for more items than are in the list (but with a positive count)
+        $ret_slice = $this->redis->srandmember('set0', 200);
+
+        // Should be an array, should be however big the set is, exactly
+        $this->assertTrue(is_array($ret_slice) && count($ret_slice) == $i);
+
+        // Now ask for too many items but negative
+        $ret_slice = $this->redis->srandmember('set0', -200);
+
+        // Should be an array, should have exactly the # of items we asked for (will be dups)
+        $this->assertTrue(is_array($ret_slice) && count($ret_slice) == 200);
+
+        //
+        // Test in a pipeline
+        //
+
+        $pipe = $this->redis->pipeline();
+
+        $pipe->srandmember('set0', 20);
+        $pipe->srandmember('set0', 200);
+        $pipe->srandmember('set0', -200);
+
+        $ret = $this->redis->exec();
+
+        $this->assertTrue(is_array($ret[0]) && count($ret[0]) == 20);
+        $this->assertTrue(is_array($ret[1]) && count($ret[1]) == $i);
+        $this->assertTrue(is_array($ret[2]) && count($ret[2]) == 200);
+
+        // Kill the set
+        $this->redis->del('set0');
+    }
+
     public function testsContains()
     {
         $this->redis->delete('set');
@@ -1008,8 +1158,13 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 
         $array = array('val', 'val2', 'val3');
 
-        $this->assertEquals($array, $this->redis->sGetMembers('set'));
-	$this->assertEquals($array, $this->redis->sMembers('set'));	// test alias
+		$sGetMembers = $this->redis->sGetMembers('set');
+		sort($sGetMembers);
+		$this->assertEquals($array, $sGetMembers);
+
+		$sMembers = $this->redis->sMembers('set');
+		sort($sMembers);
+		$this->assertEquals($array, $sMembers);	// test alias
     }
 
     public function testlSet() {
@@ -1495,6 +1650,32 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	$this->assertTrue(FALSE === $this->redis->persist('x'));	// false if the key doesn’t exist.
     }
 
+    public function testClient() {
+        /* CLIENT SETNAME */
+        $this->assertTrue($this->redis->client('setname', 'phpredis_unit_tests'));
+
+        /* CLIENT LIST */
+        $arr_clients = $this->redis->client('list');
+        $this->assertTrue(is_array($arr_clients));
+
+        // Figure out which ip:port is us!
+        $str_addr = NULL;
+        foreach($arr_clients as $arr_client) {
+            if($arr_client['name'] == 'phpredis_unit_tests') {
+                $str_addr = $arr_client['addr'];
+            }
+        }
+
+        // We should have found our connection
+        $this->assertFalse(empty($str_addr));
+        
+        /* CLIENT GETNAME */
+        $this->assertTrue($this->redis->client('getname'), 'phpredis_unit_tests');
+         
+        /* CLIENT KILL -- phpredis will reconnect, so we can do this */
+        $this->assertTrue($this->redis->client('kill', $str_addr));
+    }
+
     public function testinfo() {
 	$info = $this->redis->info();
 
@@ -1506,16 +1687,42 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	    "connected_clients",
 	    "connected_slaves",
 	    "used_memory",
-	    "changes_since_last_save",
-	    "bgsave_in_progress",
-	    "last_save_time",
 	    "total_connections_received",
 	    "total_commands_processed",
 	    "role");
-
+	if (version_compare($this->version, "2.5.0", "lt")) {
+		array_push($keys,
+		    "changes_since_last_save",
+		    "bgsave_in_progress",
+		    "last_save_time"
+		);
+	} else {
+		array_push($keys,
+		    "rdb_changes_since_last_save",
+		    "rdb_bgsave_in_progress",
+		    "rdb_last_save_time"
+		);
+	}
 
 	foreach($keys as $k) {
 	    $this->assertTrue(in_array($k, array_keys($info)));
+	}
+	}
+
+    public function testInfoCommandStats() {
+
+	// INFO COMMANDSTATS is new in 2.6.0
+	if (version_compare($this->version, "2.5.0", "lt")) {
+		$this->markTestSkipped();
+	}
+
+	$info = $this->redis->info("COMMANDSTATS");
+
+	$this->assertTrue(is_array($info));
+	if (is_array($info)) {
+		foreach($info as $k => $value) {
+			$this->assertTrue(strpos($k, 'cmdstat_') !== false);
+	    }
 	}
     }
 
@@ -1535,6 +1742,26 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	$this->assertEquals($this->redis->mget(array('x', 'y', 'z')), array('a', 'b', 'c'));	// check x y z
 
 	$this->assertFalse($this->redis->mset(array())); // set ø → FALSE
+
+
+	/*
+	 * Integer keys
+	 */
+
+	// No prefix
+	$set_array = Array(-1 => 'neg1', -2 => 'neg2', -3 => 'neg3', 1 => 'one', 2 => 'two', '3' => 'three');
+	$this->redis->delete(array_keys($set_array));
+	$this->assertTrue($this->redis->mset($set_array));
+	$this->assertEquals($this->redis->mget(array_keys($set_array)), array_values($set_array));
+	$this->redis->delete(array_keys($set_array));
+
+	// With a prefix
+	$this->redis->setOption(Redis::OPT_PREFIX, 'pfx:');
+	$this->redis->delete(array_keys($set_array));
+	$this->assertTrue($this->redis->mset($set_array));
+	$this->assertEquals($this->redis->mget(array_keys($set_array)), array_values($set_array));
+	$this->redis->delete(array_keys($set_array));
+	$this->redis->setOption(Redis::OPT_PREFIX, '');
     }
 
     public function testMsetNX() {
@@ -1571,6 +1798,40 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	$this->assertTrue(array() === $this->redis->lgetRange('y', 0, -1));
 
     }
+
+    public function testBRpopLpush() {
+
+	// standard case.
+	$this->redis->delete('x', 'y');
+	$this->redis->lpush('x', 'abc');
+	$this->redis->lpush('x', 'def');	// x = [def, abc]
+
+	$this->redis->lpush('y', '123');
+	$this->redis->lpush('y', '456');	// y = [456, 123]
+
+	$this->assertEquals($this->redis->brpoplpush('x', 'y', 1), 'abc');	// we RPOP x, yielding abc.
+	$this->assertEquals($this->redis->lgetRange('x', 0, -1), array('def'));	// only def remains in x.
+	$this->assertEquals($this->redis->lgetRange('y', 0, -1), array('abc', '456', '123'));	// abc has been lpushed to y.
+
+	// with an empty source, expecting no change.
+	$this->redis->delete('x', 'y');
+	$this->assertTrue(FALSE === $this->redis->brpoplpush('x', 'y', 1));
+	$this->assertTrue(array() === $this->redis->lgetRange('x', 0, -1));
+	$this->assertTrue(array() === $this->redis->lgetRange('y', 0, -1));
+
+    }
+
+	public function testZAddFirstArg() {
+
+		$this->redis->delete('key');
+
+		$zsetName = 100; // not a string!
+		$this->assertTrue(1 === $this->redis->zAdd($zsetName, 0, 'val0'));
+		$this->assertTrue(1 === $this->redis->zAdd($zsetName, 1, 'val1'));
+
+		$this->assertTrue(array('val0', 'val1') === $this->redis->zRange($zsetName, 0, -1));
+	}
+
     public function testZX() {
 
 	$this->redis->delete('key');
@@ -1582,19 +1843,24 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	$this->assertTrue(1 === $this->redis->zAdd('key', 2, 'val2'));
 	$this->assertTrue(1 === $this->redis->zAdd('key', 1, 'val1'));
 	$this->assertTrue(1 === $this->redis->zAdd('key', 3, 'val3'));
+	$this->assertTrue(2 === $this->redis->zAdd('key', 4, 'val4', 5, 'val5')); // multiple parameters
 
-	$this->assertTrue(array('val0', 'val1', 'val2', 'val3') === $this->redis->zRange('key', 0, -1));
+	$this->assertTrue(array('val0', 'val1', 'val2', 'val3', 'val4', 'val5') === $this->redis->zRange('key', 0, -1));
 
 	// withscores
 	$ret = $this->redis->zRange('key', 0, -1, true);
-	$this->assertTrue(count($ret) == 4);
+	$this->assertTrue(count($ret) == 6);
 	$this->assertTrue($ret['val0'] == 0);
 	$this->assertTrue($ret['val1'] == 1);
 	$this->assertTrue($ret['val2'] == 2);
 	$this->assertTrue($ret['val3'] == 3);
+	$this->assertTrue($ret['val4'] == 4);
+	$this->assertTrue($ret['val5'] == 5);
 
 	$this->assertTrue(0 === $this->redis->zDelete('key', 'valX'));
 	$this->assertTrue(1 === $this->redis->zDelete('key', 'val3'));
+	$this->assertTrue(1 === $this->redis->zDelete('key', 'val4'));
+	$this->assertTrue(1 === $this->redis->zDelete('key', 'val5'));
 
 	$this->assertTrue(array('val0', 'val1', 'val2') === $this->redis->zRange('key', 0, -1));
 
@@ -1680,10 +1946,9 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	$this->assertTrue(0 === $this->redis->zUnion('keyU', array('X', 'Y')));
 	$this->assertTrue(array() === $this->redis->zRange('keyU', 0, -1));
 
-	// !Exist U Exist
-	$this->redis->delete('keyU');
+	// !Exist U Exist → copy of existing zset.
+	$this->redis->delete('keyU', 'X');
 	$this->assertTrue(2 === $this->redis->zUnion('keyU', array('key1', 'X')));
-	$this->assertTrue($this->redis->zRange('key1', 0, -1) === $this->redis->zRange('keyU', 0, -1));
 
 	// test weighted zUnion
 	$this->redis->delete('keyZ');
@@ -1698,6 +1963,60 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	$this->redis->delete('key2');
 	$this->redis->delete('key3');
 
+	// test integer and float weights (GitHub issue #109).
+	$this->redis->del('key1', 'key2', 'key3');
+
+	$this->redis->zadd('key1', 1, 'one');
+	$this->redis->zadd('key1', 2, 'two');
+	$this->redis->zadd('key2', 1, 'one');
+	$this->redis->zadd('key2', 2, 'two');
+	$this->redis->zadd('key2', 3, 'three');
+
+	$this->assertTrue($this->redis->zunion('key3', array('key1', 'key2'), array(2, 3.0)) === 3);
+
+	$this->redis->delete('key1');
+	$this->redis->delete('key2');
+	$this->redis->delete('key3');
+
+    // Test 'inf', '-inf', and '+inf' weights (GitHub issue #336)
+    $this->redis->zadd('key1', 1, 'one', 2, 'two', 3, 'three');
+    $this->redis->zadd('key2', 3, 'three', 4, 'four', 5, 'five');
+
+    // Make sure phpredis handles these weights
+    $this->assertTrue($this->redis->zunion('key3', array('key1','key2'), array(1, 'inf'))  === 5);
+    $this->assertTrue($this->redis->zunion('key3', array('key1','key2'), array(1, '-inf')) === 5);
+    $this->assertTrue($this->redis->zunion('key3', array('key1','key2'), array(1, '+inf')) === 5);
+
+    // Now, confirm that they're being sent, and that it works
+    $arr_weights = Array('inf','-inf','+inf');
+
+    foreach($arr_weights as $str_weight) {
+        $r = $this->redis->zunionstore('key3', array('key1','key2'), array(1,$str_weight));
+        $this->assertTrue($r===5);
+        $r = $this->redis->zrangebyscore('key3', '(-inf', '(inf',array('withscores'=>true));
+        $this->assertTrue(count($r)===2);
+        $this->assertTrue(isset($r['one']));
+        $this->assertTrue(isset($r['two']));
+    }
+
+    $this->redis->del('key1','key2','key3');
+
+	$this->redis->zadd('key1', 2000.1, 'one');
+	$this->redis->zadd('key1', 3000.1, 'two');
+	$this->redis->zadd('key1', 4000.1, 'three');
+
+	$ret = $this->redis->zRange('key1', 0, -1, TRUE);
+	$this->assertTrue(count($ret) === 3);
+	$retValues = array_keys($ret);
+
+	$this->assertTrue(array('one', 'two', 'three') === $retValues);
+
+	// + 0 converts from string to float OR integer
+	$this->assertTrue(is_float($ret['one'] + 0));
+	$this->assertTrue(is_float($ret['two'] + 0));
+	$this->assertTrue(is_float($ret['three'] + 0));
+
+	$this->redis->delete('key1');
 
 	// ZREMRANGEBYRANK
 	$this->redis->zAdd('key1', 1, 'one');
@@ -1773,6 +2092,7 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	$this->assertTrue(2 === $this->redis->zRevRank('z', 'one'));
 	$this->assertTrue(1 === $this->redis->zRevRank('z', 'two'));
 	$this->assertTrue(0 === $this->redis->zRevRank('z', 'five'));
+
     }
 
     public function testHashes() {
@@ -1795,12 +2115,13 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	$this->assertTrue(FALSE === $this->redis->hGet('key', 'c'));	// unknownkey
 
 	// hDel
-	$this->assertTrue(TRUE === $this->redis->hDel('h', 'a')); // TRUE on success
-	$this->assertTrue(FALSE === $this->redis->hDel('h', 'a')); // FALSE on failure
+	$this->assertTrue(1 === $this->redis->hDel('h', 'a')); // 1 on success
+	$this->assertTrue(0 === $this->redis->hDel('h', 'a')); // 0 on failure
 
 	$this->redis->delete('h');
 	$this->redis->hSet('h', 'x', 'a');
 	$this->redis->hSet('h', 'y', 'b');
+	$this->assertTrue(2 === $this->redis->hDel('h', 'x', 'y')); // variadic
 
 	// hsetnx
 	$this->redis->delete('h');
@@ -1840,6 +2161,17 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 
 	$this->redis->hSet('h', 'y', 'not-a-number');
 	$this->assertTrue(FALSE === $this->redis->hIncrBy('h', 'y', 1));
+
+	if (version_compare($this->version, "2.5.0", "ge")) {
+	// hIncrByFloat
+	$this->redis->delete('h');
+	$this->assertTrue(1.5 === $this->redis->hIncrByFloat('h','x', 1.5));
+	$this->assertTrue(3.0 === $this->redis->hincrByFloat('h','x', 1.5));
+	$this->assertTrue(1.5 === $this->redis->hincrByFloat('h','x', -1.5));
+
+	$this->redis->hset('h','y','not-a-number');
+	$this->assertTrue(FALSE === $this->redis->hIncrByFloat('h', 'y', 1.5));
+	}
 
 	// hmset
 	$this->redis->delete('h');
@@ -1895,12 +2227,51 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	    $this->assertTrue("\x00\x00\x00\x00\x00\x00foo" === $this->redis->get('key'));
     }
 
+    public function testObject() {
+	    $this->redis->del('key');
+	    $this->assertTrue($this->redis->object('encoding', 'key') === FALSE);
+	    $this->assertTrue($this->redis->object('refcount', 'key') === FALSE);
+	    $this->assertTrue($this->redis->object('idletime', 'key') === FALSE);
+
+	    $this->redis->set('key', 'value');
+	    $this->assertTrue($this->redis->object('encoding', 'key') === "raw");
+	    $this->assertTrue($this->redis->object('refcount', 'key') === 1);
+	    $this->assertTrue($this->redis->object('idletime', 'key') === 0);
+
+	    $this->redis->del('key');
+	    $this->redis->lpush('key', 'value');
+	    $this->assertTrue($this->redis->object('encoding', 'key') === "ziplist");
+	    $this->assertTrue($this->redis->object('refcount', 'key') === 1);
+	    $this->assertTrue($this->redis->object('idletime', 'key') === 0);
+
+	    $this->redis->del('key');
+	    $this->redis->sadd('key', 'value');
+	    $this->assertTrue($this->redis->object('encoding', 'key') === "hashtable");
+	    $this->assertTrue($this->redis->object('refcount', 'key') === 1);
+	    $this->assertTrue($this->redis->object('idletime', 'key') === 0);
+
+	    $this->redis->del('key');
+	    $this->redis->sadd('key', 42);
+	    $this->redis->sadd('key', 1729);
+	    $this->assertTrue($this->redis->object('encoding', 'key') === "intset");
+	    $this->assertTrue($this->redis->object('refcount', 'key') === 1);
+	    $this->assertTrue($this->redis->object('idletime', 'key') === 0);
+
+	    $this->redis->del('key');
+	    $this->redis->lpush('key', str_repeat('A', pow(10,6))); // 1M elements, too big for a ziplist.
+	    $this->assertTrue($this->redis->object('encoding', 'key') === "linkedlist");
+	    $this->assertTrue($this->redis->object('refcount', 'key') === 1);
+	    $this->assertTrue($this->redis->object('idletime', 'key') === 0);
+    }
+
     public function testMultiExec() {
 	$this->sequence(Redis::MULTI);
+	$this->differentType(Redis::MULTI);
 
 	// with prefix as well
 	$this->redis->setOption(Redis::OPT_PREFIX, "test:");
 	$this->sequence(Redis::MULTI);
+	$this->differentType(Redis::MULTI);
 	$this->redis->setOption(Redis::OPT_PREFIX, "");
 
 	$this->redis->set('x', '42');
@@ -1937,10 +2308,12 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 
     public function testPipeline() {
 	$this->sequence(Redis::PIPELINE);
+	$this->differentType(Redis::PIPELINE);
 
 	// with prefix as well
 	$this->redis->setOption(Redis::OPT_PREFIX, "test:");
 	$this->sequence(Redis::PIPELINE);
+	$this->differentType(Redis::PIPELINE);
 	$this->redis->setOption(Redis::OPT_PREFIX, "");
     }
 
@@ -2047,8 +2420,9 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 		    ->expireAt('key', '0000')
 		    ->exec();
 	    $this->assertTrue(is_array($ret));
-	    $i = 0;
-	    $this->assertTrue($ret[$i++] == -1);
+		$i = 0;
+		$ttl = $ret[$i++];
+	    $this->assertTrue($ttl === -1 || $ttl === -2);
 	    $this->assertTrue($ret[$i++] === array('val1', 'valX', FALSE)); // mget
 	    $this->assertTrue($ret[$i++] === TRUE); // mset
 	    $this->assertTrue($ret[$i++] === TRUE); // set
@@ -2323,16 +2697,16 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	    $i = 0;
 	    $this->assertTrue(is_array($ret));
 	    $this->assertTrue(is_long($ret[$i]) && $ret[$i] >= 0 && $ret[$i] <= 5); $i++; // deleted at most 5 values.
-	    $this->assertTrue($ret[$i++] === TRUE); // skey1 now has 1 element.
-	    $this->assertTrue($ret[$i++] === TRUE); // skey1 now has 2 elements.
-	    $this->assertTrue($ret[$i++] === TRUE); // skey1 now has 3 elements.
-	    $this->assertTrue($ret[$i++] === TRUE); // skey1 now has 4 elements.
+	    $this->assertTrue($ret[$i++] === 1); // skey1 now has 1 element.
+	    $this->assertTrue($ret[$i++] === 1); // skey1 now has 2 elements.
+	    $this->assertTrue($ret[$i++] === 1); // skey1 now has 3 elements.
+	    $this->assertTrue($ret[$i++] === 1); // skey1 now has 4 elements.
 
-	    $this->assertTrue($ret[$i++] === TRUE); // skey2 now has 1 element.
-	    $this->assertTrue($ret[$i++] === TRUE); // skey2 now has 2 elements.
+	    $this->assertTrue($ret[$i++] === 1); // skey2 now has 1 element.
+	    $this->assertTrue($ret[$i++] === 1); // skey2 now has 2 elements.
 
 	    $this->assertTrue($ret[$i++] === 4);
-	    $this->assertTrue($ret[$i++] === TRUE); // we did remove that value.
+	    $this->assertTrue($ret[$i++] === 1); // we did remove that value.
 	    $this->assertTrue($ret[$i++] === 3); // now 3 values only.
 	    $this->assertTrue($ret[$i++] === TRUE); // the move did succeed.
 	    $this->assertTrue($ret[$i++] === 3); // sKey2 now has 3 values.
@@ -2371,7 +2745,7 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 
 	    // sorted sets
 	    $ret = $this->redis->multi($mode)
-		    ->delete('zkey1', 'zkey2', 'zkey5')
+			->delete('zkey1', 'zkey2', 'zkey5', 'zInter', 'zUnion')
 		    ->zadd('zkey1', 1, 'zValue1')
 		    ->zadd('zkey1', 5, 'zValue5')
 		    ->zadd('zkey1', 2, 'zValue2')
@@ -2400,11 +2774,12 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 		    ->zadd('zkey5', 5, 'zValue5')
 		    ->zIncrBy('zkey5', 3, 'zValue5') // fix this
 		    ->zScore('zkey5', 'zValue5')
+			->zScore('zkey5', 'unknown')
 		    ->exec();
 
 	    $i = 0;
 	    $this->assertTrue(is_array($ret));
-	    $this->assertTrue(is_long($ret[$i]) && $ret[$i] >= 0 && $ret[$i] <= 3); $i++; // deleting at most 3 keys
+	    $this->assertTrue(is_long($ret[$i]) && $ret[$i] >= 0 && $ret[$i] <= 5); $i++; // deleting at most 5 keys
 	    $this->assertTrue($ret[$i++] === 1);
 	    $this->assertTrue($ret[$i++] === 1);
 	    $this->assertTrue($ret[$i++] === 1);
@@ -2433,12 +2808,11 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	    $this->assertTrue($ret[$i++] === 1); // added value to zkey5, with score 5
 	    $this->assertTrue($ret[$i++] === 8.0); // incremented score by 3 → it is now 8.
 	    $this->assertTrue($ret[$i++] === 8.0); // current score is 8.
+		$this->assertTrue($ret[$i++] === FALSE); // score for unknown element.
 
 	    $this->assertTrue(count($ret) === $i);
 
-	    $serializer = $this->redis->getOption(Redis::OPT_SERIALIZER);
-	    $this->redis->setOption(Redis::OPT_SERIALIZER, Redis::SERIALIZER_NONE); // testing incr, which doesn't work with the serializer
-	    // hash
+		// hash
 	    $ret = $this->redis->multi($mode)
 		    ->delete('hkey1')
 		    ->hset('hkey1', 'key1', 'value1')
@@ -2454,12 +2828,9 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 		    ->hvals('hkey1')
 		    ->hgetall('hkey1')
 		    ->hset('hkey1', 'valn', 1)
-		    ->hincrby('hkey1', 'valn', 4)
-		    ->hincrby('hkey1', 'val-fail', 42)
-		    ->hset('hkey1', 'val-fail', 'non-string')
+			->hset('hkey1', 'val-fail', 'non-string')
 		    ->hget('hkey1', 'val-fail')
-		    ->hincrby('hkey1', 'val-fail', 42)
-		    ->exec();
+			->exec();
 
 	    $i = 0;
 	    $this->assertTrue(is_array($ret));
@@ -2470,22 +2841,18 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	    $this->assertTrue($ret[$i++] === array('key1' => 'value1', 'key2' => 'value2', 'key3' => 'value3')); // hmget, 3 elements
 	    $this->assertTrue($ret[$i++] === 'value1'); // hget
 	    $this->assertTrue($ret[$i++] === 3); // hlen
-	    $this->assertTrue($ret[$i++] === TRUE); // hdel succeeded
-	    $this->assertTrue($ret[$i++] === FALSE); // hdel failed
+	    $this->assertTrue($ret[$i++] === 1); // hdel succeeded
+	    $this->assertTrue($ret[$i++] === 0); // hdel failed
 	    $this->assertTrue($ret[$i++] === FALSE); // hexists didn't find the deleted key
 	    $this->assertTrue($ret[$i] === array('key1', 'key3') || $ret[$i] === array('key3', 'key1')); $i++; // hkeys
 	    $this->assertTrue($ret[$i] === array('value1', 'value3') || $ret[$i] === array('value3', 'value1')); $i++; // hvals
 	    $this->assertTrue($ret[$i] === array('key1' => 'value1', 'key3' => 'value3') || $ret[$i] === array('key3' => 'value3', 'key1' => 'value1')); $i++; // hgetall
 	    $this->assertTrue($ret[$i++] === 1); // added 1 element
-	    $this->assertTrue($ret[$i++] === 5); // added 4 to value 1 → 5
-	    $this->assertTrue($ret[$i++] === 42); // member doesn't exist → assume 0, and then add.
-	    $this->assertTrue($ret[$i++] === 0); // didn't add the element, already present, so 0.
+		$this->assertTrue($ret[$i++] === 1); // added the element, so 1.
 	    $this->assertTrue($ret[$i++] === 'non-string'); // hset succeeded
-	    $this->assertTrue($ret[$i++] === FALSE); // member isn't a number → fail.
-	    $this->assertTrue(count($ret) === $i);
-	    $this->redis->setOption(Redis::OPT_SERIALIZER, $serializer);
+		$this->assertTrue(count($ret) === $i);
 
-	    $ret = $this->redis->multi() // default to MULTI, not PIPELINE.
+		$ret = $this->redis->multi($mode) // default to MULTI, not PIPELINE.
 		    ->delete('test')
 		    ->set('test', 'xyz')
 		    ->get('test')
@@ -2496,6 +2863,904 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	    $this->assertTrue($ret[$i++] === TRUE); // added 1 element
 	    $this->assertTrue($ret[$i++] === 'xyz');
 	    $this->assertTrue(count($ret) === $i);
+
+        // GitHub issue 78
+        $this->redis->del('test');
+        for($i = 1; $i <= 5; $i++)
+            $this->redis->zadd('test', $i, (string)$i);
+
+        $result = $this->redis->multi($mode)
+            ->zscore('test', "1")
+            ->zscore('test', "6")
+            ->zscore('test', "8")
+            ->zscore('test', "2")
+            ->exec();
+
+        $this->assertTrue($result === array(1.0, FALSE, FALSE, 2.0));
+    }
+
+    protected function differentType($mode) {
+
+        // string
+        $key = 'string';
+        $ret = $this->redis->multi($mode)
+            ->delete($key)
+            ->set($key, 'value')
+
+            // lists I/F
+            ->rPush($key, 'lvalue')
+            ->lPush($key, 'lvalue')
+            ->lLen($key)
+            ->lPop($key)
+            ->lGetRange($key, 0, -1)
+            ->lTrim($key, 0, 1)
+            ->lGet($key, 0)
+            ->lSet($key, 0, "newValue")
+            ->lRemove($key, 'lvalue', 1)
+            ->lPop($key)
+            ->rPop($key)
+            ->rPoplPush($key, __FUNCTION__ . 'lkey1')
+
+            // sets I/F
+            ->sAdd($key, 'sValue1')
+            ->sRemove($key, 'sValue1')
+            ->sPop($key)
+            ->sMove($key, __FUNCTION__ . 'skey1', 'sValue1')
+            ->sSize($key)
+            ->sContains($key, 'sValue1')
+            ->sInter($key, __FUNCTION__ . 'skey2')
+            ->sUnion($key, __FUNCTION__ . 'skey4')
+            ->sDiff($key, __FUNCTION__ . 'skey7')
+            ->sMembers($key)
+            ->sRandMember($key)
+
+            // sorted sets I/F
+            ->zAdd($key, 1, 'zValue1')
+            ->zDelete($key, 'zValue1')
+            ->zIncrBy($key, 1, 'zValue1')
+            ->zRank($key, 'zValue1')
+            ->zRevRank($key, 'zValue1')
+            ->zRange($key, 0, -1)
+            ->zReverseRange($key, 0, -1)
+            ->zRangeByScore($key, 1, 2)
+            ->zCount($key, 0, -1)
+            ->zCard($key)
+            ->zScore($key, 'zValue1')
+            ->zDeleteRangeByRank($key, 1, 2)
+            ->zDeleteRangeByScore($key, 1, 2)
+
+            // hash I/F
+            ->hSet($key, 'key1', 'value1')
+            ->hGet($key, 'key1')
+            ->hMGet($key, array('key1'))
+            ->hMSet($key, array('key1' => 'value1'))
+            ->hIncrBy($key, 'key2', 1)
+            ->hExists($key, 'key2')
+            ->hDel($key, 'key2')
+            ->hLen($key)
+            ->hKeys($key)
+            ->hVals($key)
+            ->hGetAll($key)
+
+            ->exec();
+
+        $i = 0;
+        $this->assertTrue(is_array($ret));
+        $this->assertTrue(is_long($ret[$i++])); // delete
+        $this->assertTrue($ret[$i++] === TRUE); // set
+
+        $this->assertTrue($ret[$i++] === FALSE); // rpush
+        $this->assertTrue($ret[$i++] === FALSE); // lpush
+        $this->assertTrue($ret[$i++] === FALSE); // llen
+        $this->assertTrue($ret[$i++] === FALSE); // lpop
+        $this->assertTrue($ret[$i++] === FALSE); // lgetrange
+        $this->assertTrue($ret[$i++] === FALSE); // ltrim
+        $this->assertTrue($ret[$i++] === FALSE); // lget
+        $this->assertTrue($ret[$i++] === FALSE); // lset
+        $this->assertTrue($ret[$i++] === FALSE); // lremove
+        $this->assertTrue($ret[$i++] === FALSE); // lpop
+        $this->assertTrue($ret[$i++] === FALSE); // rpop
+        $this->assertTrue($ret[$i++] === FALSE); // rpoplush
+
+        $this->assertTrue($ret[$i++] === FALSE); // sadd
+        $this->assertTrue($ret[$i++] === FALSE); // sremove
+        $this->assertTrue($ret[$i++] === FALSE); // spop
+        $this->assertTrue($ret[$i++] === FALSE); // smove
+        $this->assertTrue($ret[$i++] === FALSE); // ssize
+        $this->assertTrue($ret[$i++] === FALSE); // scontains
+        $this->assertTrue($ret[$i++] === FALSE); // sinter
+        $this->assertTrue($ret[$i++] === FALSE); // sunion
+        $this->assertTrue($ret[$i++] === FALSE); // sdiff
+        $this->assertTrue($ret[$i++] === FALSE); // smembers
+        $this->assertTrue($ret[$i++] === FALSE); // srandmember
+
+        $this->assertTrue($ret[$i++] === FALSE); // zadd
+        $this->assertTrue($ret[$i++] === FALSE); // zdelete
+        $this->assertTrue($ret[$i++] === FALSE); // zincrby
+        $this->assertTrue($ret[$i++] === FALSE); // zrank
+        $this->assertTrue($ret[$i++] === FALSE); // zrevrank
+        $this->assertTrue($ret[$i++] === FALSE); // zrange
+        $this->assertTrue($ret[$i++] === FALSE); // zreverserange
+        $this->assertTrue($ret[$i++] === FALSE); // zrangebyscore
+        $this->assertTrue($ret[$i++] === FALSE); // zcount
+        $this->assertTrue($ret[$i++] === FALSE); // zcard
+        $this->assertTrue($ret[$i++] === FALSE); // zscore
+        $this->assertTrue($ret[$i++] === FALSE); // zdeleterangebyrank
+        $this->assertTrue($ret[$i++] === FALSE); // zdeleterangebyscore
+
+        $this->assertTrue($ret[$i++] === FALSE); // hset
+        $this->assertTrue($ret[$i++] === FALSE); // hget
+        $this->assertTrue($ret[$i++] === FALSE); // hmget
+        $this->assertTrue($ret[$i++] === FALSE); // hmset
+        $this->assertTrue($ret[$i++] === FALSE); // hincrby
+        $this->assertTrue($ret[$i++] === FALSE); // hexists
+        $this->assertTrue($ret[$i++] === FALSE); // hdel
+        $this->assertTrue($ret[$i++] === FALSE); // hlen
+        $this->assertTrue($ret[$i++] === FALSE); // hkeys
+        $this->assertTrue($ret[$i++] === FALSE); // hvals
+        $this->assertTrue($ret[$i++] === FALSE); // hgetall
+
+        $this->assertEquals($i, count($ret));
+
+        // list
+        $key = 'list';
+        $ret = $this->redis->multi($mode)
+            ->delete($key)
+            ->lpush($key, 'lvalue')
+
+            // string I/F
+            ->get($key)
+            ->getset($key, 'value2')
+            ->append($key, 'append')
+            ->substr($key, 0, 8)
+            ->mget(array($key))
+            ->incr($key)
+            ->incrBy($key, 1)
+            ->decr($key)
+            ->decrBy($key, 1)
+
+            // sets I/F
+            ->sAdd($key, 'sValue1')
+            ->sRemove($key, 'sValue1')
+            ->sPop($key)
+            ->sMove($key, __FUNCTION__ . 'skey1', 'sValue1')
+            ->sSize($key)
+            ->sContains($key, 'sValue1')
+            ->sInter($key, __FUNCTION__ . 'skey2')
+            ->sUnion($key, __FUNCTION__ . 'skey4')
+            ->sDiff($key, __FUNCTION__ . 'skey7')
+            ->sMembers($key)
+            ->sRandMember($key)
+
+            // sorted sets I/F
+            ->zAdd($key, 1, 'zValue1')
+            ->zDelete($key, 'zValue1')
+            ->zIncrBy($key, 1, 'zValue1')
+            ->zRank($key, 'zValue1')
+            ->zRevRank($key, 'zValue1')
+            ->zRange($key, 0, -1)
+            ->zReverseRange($key, 0, -1)
+            ->zRangeByScore($key, 1, 2)
+            ->zCount($key, 0, -1)
+            ->zCard($key)
+            ->zScore($key, 'zValue1')
+            ->zDeleteRangeByRank($key, 1, 2)
+            ->zDeleteRangeByScore($key, 1, 2)
+
+            // hash I/F
+            ->hSet($key, 'key1', 'value1')
+            ->hGet($key, 'key1')
+            ->hMGet($key, array('key1'))
+            ->hMSet($key, array('key1' => 'value1'))
+            ->hIncrBy($key, 'key2', 1)
+            ->hExists($key, 'key2')
+            ->hDel($key, 'key2')
+            ->hLen($key)
+            ->hKeys($key)
+            ->hVals($key)
+            ->hGetAll($key)
+
+            ->exec();
+
+        $i = 0;
+        $this->assertTrue(is_array($ret));
+        $this->assertTrue(is_long($ret[$i++])); // delete
+        $this->assertTrue($ret[$i++] === 1); // lpush
+
+        $this->assertTrue($ret[$i++] === FALSE); // get
+        $this->assertTrue($ret[$i++] === FALSE); // getset
+        $this->assertTrue($ret[$i++] === FALSE); // append
+        $this->assertTrue($ret[$i++] === FALSE); // substr
+        $this->assertTrue(is_array($ret[$i]) && count($ret[$i]) === 1 && $ret[$i][0] === FALSE); // mget
+        $i++;
+        $this->assertTrue($ret[$i++] === FALSE); // incr
+        $this->assertTrue($ret[$i++] === FALSE); // incrBy
+        $this->assertTrue($ret[$i++] === FALSE); // decr
+        $this->assertTrue($ret[$i++] === FALSE); // decrBy
+
+        $this->assertTrue($ret[$i++] === FALSE); // sadd
+        $this->assertTrue($ret[$i++] === FALSE); // sremove
+        $this->assertTrue($ret[$i++] === FALSE); // spop
+        $this->assertTrue($ret[$i++] === FALSE); // smove
+        $this->assertTrue($ret[$i++] === FALSE); // ssize
+        $this->assertTrue($ret[$i++] === FALSE); // scontains
+        $this->assertTrue($ret[$i++] === FALSE); // sinter
+        $this->assertTrue($ret[$i++] === FALSE); // sunion
+        $this->assertTrue($ret[$i++] === FALSE); // sdiff
+        $this->assertTrue($ret[$i++] === FALSE); // smembers
+        $this->assertTrue($ret[$i++] === FALSE); // srandmember
+
+        $this->assertTrue($ret[$i++] === FALSE); // zadd
+        $this->assertTrue($ret[$i++] === FALSE); // zdelete
+        $this->assertTrue($ret[$i++] === FALSE); // zincrby
+        $this->assertTrue($ret[$i++] === FALSE); // zrank
+        $this->assertTrue($ret[$i++] === FALSE); // zrevrank
+        $this->assertTrue($ret[$i++] === FALSE); // zrange
+        $this->assertTrue($ret[$i++] === FALSE); // zreverserange
+        $this->assertTrue($ret[$i++] === FALSE); // zrangebyscore
+        $this->assertTrue($ret[$i++] === FALSE); // zcount
+        $this->assertTrue($ret[$i++] === FALSE); // zcard
+        $this->assertTrue($ret[$i++] === FALSE); // zscore
+        $this->assertTrue($ret[$i++] === FALSE); // zdeleterangebyrank
+        $this->assertTrue($ret[$i++] === FALSE); // zdeleterangebyscore
+
+        $this->assertTrue($ret[$i++] === FALSE); // hset
+        $this->assertTrue($ret[$i++] === FALSE); // hget
+        $this->assertTrue($ret[$i++] === FALSE); // hmget
+        $this->assertTrue($ret[$i++] === FALSE); // hmset
+        $this->assertTrue($ret[$i++] === FALSE); // hincrby
+        $this->assertTrue($ret[$i++] === FALSE); // hexists
+        $this->assertTrue($ret[$i++] === FALSE); // hdel
+        $this->assertTrue($ret[$i++] === FALSE); // hlen
+        $this->assertTrue($ret[$i++] === FALSE); // hkeys
+        $this->assertTrue($ret[$i++] === FALSE); // hvals
+        $this->assertTrue($ret[$i++] === FALSE); // hgetall
+
+        $this->assertEquals($i, count($ret));
+
+        // set
+        $key = 'set';
+        $ret = $this->redis->multi($mode)
+            ->delete($key)
+            ->sAdd($key, 'sValue')
+
+            // string I/F
+            ->get($key)
+            ->getset($key, 'value2')
+            ->append($key, 'append')
+            ->substr($key, 0, 8)
+            ->mget(array($key))
+            ->incr($key)
+            ->incrBy($key, 1)
+            ->decr($key)
+            ->decrBy($key, 1)
+
+            // lists I/F
+            ->rPush($key, 'lvalue')
+            ->lPush($key, 'lvalue')
+            ->lLen($key)
+            ->lPop($key)
+            ->lGetRange($key, 0, -1)
+            ->lTrim($key, 0, 1)
+            ->lGet($key, 0)
+            ->lSet($key, 0, "newValue")
+            ->lRemove($key, 'lvalue', 1)
+            ->lPop($key)
+            ->rPop($key)
+            ->rPoplPush($key, __FUNCTION__ . 'lkey1')
+
+            // sorted sets I/F
+            ->zAdd($key, 1, 'zValue1')
+            ->zDelete($key, 'zValue1')
+            ->zIncrBy($key, 1, 'zValue1')
+            ->zRank($key, 'zValue1')
+            ->zRevRank($key, 'zValue1')
+            ->zRange($key, 0, -1)
+            ->zReverseRange($key, 0, -1)
+            ->zRangeByScore($key, 1, 2)
+            ->zCount($key, 0, -1)
+            ->zCard($key)
+            ->zScore($key, 'zValue1')
+            ->zDeleteRangeByRank($key, 1, 2)
+            ->zDeleteRangeByScore($key, 1, 2)
+
+            // hash I/F
+            ->hSet($key, 'key1', 'value1')
+            ->hGet($key, 'key1')
+            ->hMGet($key, array('key1'))
+            ->hMSet($key, array('key1' => 'value1'))
+            ->hIncrBy($key, 'key2', 1)
+            ->hExists($key, 'key2')
+            ->hDel($key, 'key2')
+            ->hLen($key)
+            ->hKeys($key)
+            ->hVals($key)
+            ->hGetAll($key)
+
+            ->exec();
+
+        $i = 0;
+        $this->assertTrue(is_array($ret));
+        $this->assertTrue(is_long($ret[$i++])); // delete
+        $this->assertTrue($ret[$i++] === 1); // zadd
+
+        $this->assertTrue($ret[$i++] === FALSE); // get
+        $this->assertTrue($ret[$i++] === FALSE); // getset
+        $this->assertTrue($ret[$i++] === FALSE); // append
+        $this->assertTrue($ret[$i++] === FALSE); // substr
+        $this->assertTrue(is_array($ret[$i]) && count($ret[$i]) === 1 && $ret[$i][0] === FALSE); // mget
+        $i++;
+        $this->assertTrue($ret[$i++] === FALSE); // incr
+        $this->assertTrue($ret[$i++] === FALSE); // incrBy
+        $this->assertTrue($ret[$i++] === FALSE); // decr
+        $this->assertTrue($ret[$i++] === FALSE); // decrBy
+
+        $this->assertTrue($ret[$i++] === FALSE); // rpush
+        $this->assertTrue($ret[$i++] === FALSE); // lpush
+        $this->assertTrue($ret[$i++] === FALSE); // llen
+        $this->assertTrue($ret[$i++] === FALSE); // lpop
+        $this->assertTrue($ret[$i++] === FALSE); // lgetrange
+        $this->assertTrue($ret[$i++] === FALSE); // ltrim
+        $this->assertTrue($ret[$i++] === FALSE); // lget
+        $this->assertTrue($ret[$i++] === FALSE); // lset
+        $this->assertTrue($ret[$i++] === FALSE); // lremove
+        $this->assertTrue($ret[$i++] === FALSE); // lpop
+        $this->assertTrue($ret[$i++] === FALSE); // rpop
+        $this->assertTrue($ret[$i++] === FALSE); // rpoplush
+
+        $this->assertTrue($ret[$i++] === FALSE); // zadd
+        $this->assertTrue($ret[$i++] === FALSE); // zdelete
+        $this->assertTrue($ret[$i++] === FALSE); // zincrby
+        $this->assertTrue($ret[$i++] === FALSE); // zrank
+        $this->assertTrue($ret[$i++] === FALSE); // zrevrank
+        $this->assertTrue($ret[$i++] === FALSE); // zrange
+        $this->assertTrue($ret[$i++] === FALSE); // zreverserange
+        $this->assertTrue($ret[$i++] === FALSE); // zrangebyscore
+        $this->assertTrue($ret[$i++] === FALSE); // zcount
+        $this->assertTrue($ret[$i++] === FALSE); // zcard
+        $this->assertTrue($ret[$i++] === FALSE); // zscore
+        $this->assertTrue($ret[$i++] === FALSE); // zdeleterangebyrank
+        $this->assertTrue($ret[$i++] === FALSE); // zdeleterangebyscore
+
+        $this->assertTrue($ret[$i++] === FALSE); // hset
+        $this->assertTrue($ret[$i++] === FALSE); // hget
+        $this->assertTrue($ret[$i++] === FALSE); // hmget
+        $this->assertTrue($ret[$i++] === FALSE); // hmset
+        $this->assertTrue($ret[$i++] === FALSE); // hincrby
+        $this->assertTrue($ret[$i++] === FALSE); // hexists
+        $this->assertTrue($ret[$i++] === FALSE); // hdel
+        $this->assertTrue($ret[$i++] === FALSE); // hlen
+        $this->assertTrue($ret[$i++] === FALSE); // hkeys
+        $this->assertTrue($ret[$i++] === FALSE); // hvals
+        $this->assertTrue($ret[$i++] === FALSE); // hgetall
+
+        $this->assertEquals($i, count($ret));
+
+        // sorted set
+        $key = 'sortedset';
+        $ret = $this->redis->multi($mode)
+            ->delete($key)
+            ->zAdd($key, 0, 'zValue')
+
+            // string I/F
+            ->get($key)
+            ->getset($key, 'value2')
+            ->append($key, 'append')
+            ->substr($key, 0, 8)
+            ->mget(array($key))
+            ->incr($key)
+            ->incrBy($key, 1)
+            ->decr($key)
+            ->decrBy($key, 1)
+
+            // lists I/F
+            ->rPush($key, 'lvalue')
+            ->lPush($key, 'lvalue')
+            ->lLen($key)
+            ->lPop($key)
+            ->lGetRange($key, 0, -1)
+            ->lTrim($key, 0, 1)
+            ->lGet($key, 0)
+            ->lSet($key, 0, "newValue")
+            ->lRemove($key, 'lvalue', 1)
+            ->lPop($key)
+            ->rPop($key)
+            ->rPoplPush($key, __FUNCTION__ . 'lkey1')
+
+            // sets I/F
+            ->sAdd($key, 'sValue1')
+            ->sRemove($key, 'sValue1')
+            ->sPop($key)
+            ->sMove($key, __FUNCTION__ . 'skey1', 'sValue1')
+            ->sSize($key)
+            ->sContains($key, 'sValue1')
+            ->sInter($key, __FUNCTION__ . 'skey2')
+            ->sUnion($key, __FUNCTION__ . 'skey4')
+            ->sDiff($key, __FUNCTION__ . 'skey7')
+            ->sMembers($key)
+            ->sRandMember($key)
+
+            // hash I/F
+            ->hSet($key, 'key1', 'value1')
+            ->hGet($key, 'key1')
+            ->hMGet($key, array('key1'))
+            ->hMSet($key, array('key1' => 'value1'))
+            ->hIncrBy($key, 'key2', 1)
+            ->hExists($key, 'key2')
+            ->hDel($key, 'key2')
+            ->hLen($key)
+            ->hKeys($key)
+            ->hVals($key)
+            ->hGetAll($key)
+
+            ->exec();
+
+        $i = 0;
+        $this->assertTrue(is_array($ret));
+        $this->assertTrue(is_long($ret[$i++])); // delete
+        $this->assertTrue($ret[$i++] === 1); // zadd
+
+        $this->assertTrue($ret[$i++] === FALSE); // get
+        $this->assertTrue($ret[$i++] === FALSE); // getset
+        $this->assertTrue($ret[$i++] === FALSE); // append
+        $this->assertTrue($ret[$i++] === FALSE); // substr
+        $this->assertTrue(is_array($ret[$i]) && count($ret[$i]) === 1 && $ret[$i][0] === FALSE); // mget
+        $i++;
+        $this->assertTrue($ret[$i++] === FALSE); // incr
+        $this->assertTrue($ret[$i++] === FALSE); // incrBy
+        $this->assertTrue($ret[$i++] === FALSE); // decr
+        $this->assertTrue($ret[$i++] === FALSE); // decrBy
+
+        $this->assertTrue($ret[$i++] === FALSE); // rpush
+        $this->assertTrue($ret[$i++] === FALSE); // lpush
+        $this->assertTrue($ret[$i++] === FALSE); // llen
+        $this->assertTrue($ret[$i++] === FALSE); // lpop
+        $this->assertTrue($ret[$i++] === FALSE); // lgetrange
+        $this->assertTrue($ret[$i++] === FALSE); // ltrim
+        $this->assertTrue($ret[$i++] === FALSE); // lget
+        $this->assertTrue($ret[$i++] === FALSE); // lset
+        $this->assertTrue($ret[$i++] === FALSE); // lremove
+        $this->assertTrue($ret[$i++] === FALSE); // lpop
+        $this->assertTrue($ret[$i++] === FALSE); // rpop
+        $this->assertTrue($ret[$i++] === FALSE); // rpoplush
+
+        $this->assertTrue($ret[$i++] === FALSE); // sadd
+        $this->assertTrue($ret[$i++] === FALSE); // sremove
+        $this->assertTrue($ret[$i++] === FALSE); // spop
+        $this->assertTrue($ret[$i++] === FALSE); // smove
+        $this->assertTrue($ret[$i++] === FALSE); // ssize
+        $this->assertTrue($ret[$i++] === FALSE); // scontains
+        $this->assertTrue($ret[$i++] === FALSE); // sinter
+        $this->assertTrue($ret[$i++] === FALSE); // sunion
+        $this->assertTrue($ret[$i++] === FALSE); // sdiff
+        $this->assertTrue($ret[$i++] === FALSE); // smembers
+        $this->assertTrue($ret[$i++] === FALSE); // srandmember
+
+        $this->assertTrue($ret[$i++] === FALSE); // hset
+        $this->assertTrue($ret[$i++] === FALSE); // hget
+        $this->assertTrue($ret[$i++] === FALSE); // hmget
+        $this->assertTrue($ret[$i++] === FALSE); // hmset
+        $this->assertTrue($ret[$i++] === FALSE); // hincrby
+        $this->assertTrue($ret[$i++] === FALSE); // hexists
+        $this->assertTrue($ret[$i++] === FALSE); // hdel
+        $this->assertTrue($ret[$i++] === FALSE); // hlen
+        $this->assertTrue($ret[$i++] === FALSE); // hkeys
+        $this->assertTrue($ret[$i++] === FALSE); // hvals
+        $this->assertTrue($ret[$i++] === FALSE); // hgetall
+
+        $this->assertEquals($i, count($ret));
+
+        // hash
+        $key = 'hash';
+        $ret = $this->redis->multi($mode)
+            ->delete($key)
+            ->hset($key, 'key1', 'hValue')
+
+            // string I/F
+            ->get($key)
+            ->getset($key, 'value2')
+            ->append($key, 'append')
+            ->substr($key, 0, 8)
+            ->mget(array($key))
+            ->incr($key)
+            ->incrBy($key, 1)
+            ->decr($key)
+            ->decrBy($key, 1)
+
+            // lists I/F
+            ->rPush($key, 'lvalue')
+            ->lPush($key, 'lvalue')
+            ->lLen($key)
+            ->lPop($key)
+            ->lGetRange($key, 0, -1)
+            ->lTrim($key, 0, 1)
+            ->lGet($key, 0)
+            ->lSet($key, 0, "newValue")
+            ->lRemove($key, 'lvalue', 1)
+            ->lPop($key)
+            ->rPop($key)
+            ->rPoplPush($key, __FUNCTION__ . 'lkey1')
+
+            // sets I/F
+            ->sAdd($key, 'sValue1')
+            ->sRemove($key, 'sValue1')
+            ->sPop($key)
+            ->sMove($key, __FUNCTION__ . 'skey1', 'sValue1')
+            ->sSize($key)
+            ->sContains($key, 'sValue1')
+            ->sInter($key, __FUNCTION__ . 'skey2')
+            ->sUnion($key, __FUNCTION__ . 'skey4')
+            ->sDiff($key, __FUNCTION__ . 'skey7')
+            ->sMembers($key)
+            ->sRandMember($key)
+
+            // sorted sets I/F
+            ->zAdd($key, 1, 'zValue1')
+            ->zDelete($key, 'zValue1')
+            ->zIncrBy($key, 1, 'zValue1')
+            ->zRank($key, 'zValue1')
+            ->zRevRank($key, 'zValue1')
+            ->zRange($key, 0, -1)
+            ->zReverseRange($key, 0, -1)
+            ->zRangeByScore($key, 1, 2)
+            ->zCount($key, 0, -1)
+            ->zCard($key)
+            ->zScore($key, 'zValue1')
+            ->zDeleteRangeByRank($key, 1, 2)
+            ->zDeleteRangeByScore($key, 1, 2)
+
+            ->exec();
+
+        $i = 0;
+        $this->assertTrue(is_array($ret));
+        $this->assertTrue(is_long($ret[$i++])); // delete
+        $this->assertTrue($ret[$i++] === 1); // hset
+
+        $this->assertTrue($ret[$i++] === FALSE); // get
+        $this->assertTrue($ret[$i++] === FALSE); // getset
+        $this->assertTrue($ret[$i++] === FALSE); // append
+        $this->assertTrue($ret[$i++] === FALSE); // substr
+        $this->assertTrue(is_array($ret[$i]) && count($ret[$i]) === 1 && $ret[$i][0] === FALSE); // mget
+        $i++;
+        $this->assertTrue($ret[$i++] === FALSE); // incr
+        $this->assertTrue($ret[$i++] === FALSE); // incrBy
+        $this->assertTrue($ret[$i++] === FALSE); // decr
+        $this->assertTrue($ret[$i++] === FALSE); // decrBy
+
+        $this->assertTrue($ret[$i++] === FALSE); // rpush
+        $this->assertTrue($ret[$i++] === FALSE); // lpush
+        $this->assertTrue($ret[$i++] === FALSE); // llen
+        $this->assertTrue($ret[$i++] === FALSE); // lpop
+        $this->assertTrue($ret[$i++] === FALSE); // lgetrange
+        $this->assertTrue($ret[$i++] === FALSE); // ltrim
+        $this->assertTrue($ret[$i++] === FALSE); // lget
+        $this->assertTrue($ret[$i++] === FALSE); // lset
+        $this->assertTrue($ret[$i++] === FALSE); // lremove
+        $this->assertTrue($ret[$i++] === FALSE); // lpop
+        $this->assertTrue($ret[$i++] === FALSE); // rpop
+        $this->assertTrue($ret[$i++] === FALSE); // rpoplush
+
+        $this->assertTrue($ret[$i++] === FALSE); // sadd
+        $this->assertTrue($ret[$i++] === FALSE); // sremove
+        $this->assertTrue($ret[$i++] === FALSE); // spop
+        $this->assertTrue($ret[$i++] === FALSE); // smove
+        $this->assertTrue($ret[$i++] === FALSE); // ssize
+        $this->assertTrue($ret[$i++] === FALSE); // scontains
+        $this->assertTrue($ret[$i++] === FALSE); // sinter
+        $this->assertTrue($ret[$i++] === FALSE); // sunion
+        $this->assertTrue($ret[$i++] === FALSE); // sdiff
+        $this->assertTrue($ret[$i++] === FALSE); // smembers
+        $this->assertTrue($ret[$i++] === FALSE); // srandmember
+
+        $this->assertTrue($ret[$i++] === FALSE); // zadd
+        $this->assertTrue($ret[$i++] === FALSE); // zdelete
+        $this->assertTrue($ret[$i++] === FALSE); // zincrby
+        $this->assertTrue($ret[$i++] === FALSE); // zrank
+        $this->assertTrue($ret[$i++] === FALSE); // zrevrank
+        $this->assertTrue($ret[$i++] === FALSE); // zrange
+        $this->assertTrue($ret[$i++] === FALSE); // zreverserange
+        $this->assertTrue($ret[$i++] === FALSE); // zrangebyscore
+        $this->assertTrue($ret[$i++] === FALSE); // zcount
+        $this->assertTrue($ret[$i++] === FALSE); // zcard
+        $this->assertTrue($ret[$i++] === FALSE); // zscore
+        $this->assertTrue($ret[$i++] === FALSE); // zdeleterangebyrank
+        $this->assertTrue($ret[$i++] === FALSE); // zdeleterangebyscore
+
+        $this->assertEquals($i, count($ret));
+    }
+
+    public function testDifferentTypeString() {
+        $key = 'string';
+        $this->redis->del($key);
+        $this->assertEquals(TRUE, $this->redis->set($key, 'value'));
+
+        // lists I/F
+        $this->assertEquals(FALSE, $this->redis->rPush($key, 'lvalue'));
+        $this->assertEquals(FALSE, $this->redis->lPush($key, 'lvalue'));
+        $this->assertEquals(FALSE, $this->redis->lLen($key));
+        $this->assertEquals(FALSE, $this->redis->lPop($key));
+        $this->assertEquals(FALSE, $this->redis->lGetRange($key, 0, -1));
+        $this->assertEquals(FALSE, $this->redis->lTrim($key, 0, 1));
+        $this->assertEquals(FALSE, $this->redis->lGet($key, 0));
+        $this->assertEquals(FALSE, $this->redis->lSet($key, 0, "newValue"));
+        $this->assertEquals(FALSE, $this->redis->lRemove($key, 'lvalue', 1));
+        $this->assertEquals(FALSE, $this->redis->lPop($key));
+        $this->assertEquals(FALSE, $this->redis->rPop($key));
+        $this->assertEquals(FALSE, $this->redis->rPoplPush($key, __FUNCTION__ . 'lkey1'));
+
+        // sets I/F
+        $this->assertEquals(FALSE, $this->redis->sAdd($key, 'sValue1'));
+        $this->assertEquals(FALSE, $this->redis->sRemove($key, 'sValue1'));
+        $this->assertEquals(FALSE, $this->redis->sPop($key));
+        $this->assertEquals(FALSE, $this->redis->sMove($key, __FUNCTION__ . 'skey1', 'sValue1'));
+        $this->assertEquals(FALSE, $this->redis->sSize($key));
+        $this->assertEquals(FALSE, $this->redis->sContains($key, 'sValue1'));
+        $this->assertEquals(FALSE, $this->redis->sInter($key, __FUNCTION__ . 'skey2'));
+        $this->assertEquals(FALSE, $this->redis->sUnion($key, __FUNCTION__ . 'skey4'));
+        $this->assertEquals(FALSE, $this->redis->sDiff($key, __FUNCTION__ . 'skey7'));
+        $this->assertEquals(FALSE, $this->redis->sMembers($key));
+        $this->assertEquals(FALSE, $this->redis->sRandMember($key));
+
+        // sorted sets I/F
+        $this->assertEquals(FALSE, $this->redis->zAdd($key, 1, 'zValue1'));
+        $this->assertEquals(FALSE, $this->redis->zDelete($key, 'zValue1'));
+        $this->assertEquals(FALSE, $this->redis->zIncrBy($key, 1, 'zValue1'));
+        $this->assertEquals(FALSE, $this->redis->zRank($key, 'zValue1'));
+        $this->assertEquals(FALSE, $this->redis->zRevRank($key, 'zValue1'));
+        $this->assertEquals(FALSE, $this->redis->zRange($key, 0, -1));
+        $this->assertEquals(FALSE, $this->redis->zReverseRange($key, 0, -1));
+        $this->assertEquals(FALSE, $this->redis->zRangeByScore($key, 1, 2));
+        $this->assertEquals(FALSE, $this->redis->zCount($key, 0, -1));
+        $this->assertEquals(FALSE, $this->redis->zCard($key));
+        $this->assertEquals(FALSE, $this->redis->zScore($key, 'zValue1'));
+        $this->assertEquals(FALSE, $this->redis->zDeleteRangeByRank($key, 1, 2));
+        $this->assertEquals(FALSE, $this->redis->zDeleteRangeByScore($key, 1, 2));
+
+        // hash I/F
+        $this->assertEquals(FALSE, $this->redis->hSet($key, 'key1', 'value1'));
+        $this->assertEquals(FALSE, $this->redis->hGet($key, 'key1'));
+        $this->assertEquals(FALSE, $this->redis->hMGet($key, array('key1')));
+        $this->assertEquals(FALSE, $this->redis->hMSet($key, array('key1' => 'value1')));
+        $this->assertEquals(FALSE, $this->redis->hIncrBy($key, 'key2', 1));
+        $this->assertEquals(FALSE, $this->redis->hExists($key, 'key2'));
+        $this->assertEquals(FALSE, $this->redis->hDel($key, 'key2'));
+        $this->assertEquals(FALSE, $this->redis->hLen($key));
+        $this->assertEquals(FALSE, $this->redis->hKeys($key));
+        $this->assertEquals(FALSE, $this->redis->hVals($key));
+        $this->assertEquals(FALSE, $this->redis->hGetAll($key));
+    }
+
+    public function testDifferentTypeList() {
+        $key = 'list';
+        $this->redis->del($key);
+        $this->assertEquals(1, $this->redis->lPush($key, 'value'));
+
+        // string I/F
+        $this->assertEquals(FALSE, $this->redis->get($key));
+        $this->assertEquals(FALSE, $this->redis->getset($key, 'value2'));
+        $this->assertEquals(FALSE, $this->redis->append($key, 'append'));
+        $this->assertEquals(FALSE, $this->redis->substr($key, 0, 8));
+        $this->assertEquals(array(FALSE), $this->redis->mget(array($key)));
+        $this->assertEquals(FALSE, $this->redis->incr($key));
+        $this->assertEquals(FALSE, $this->redis->incrBy($key, 1));
+        $this->assertEquals(FALSE, $this->redis->decr($key));
+        $this->assertEquals(FALSE, $this->redis->decrBy($key, 1));
+
+        // sets I/F
+        $this->assertEquals(FALSE, $this->redis->sAdd($key, 'sValue1'));
+        $this->assertEquals(FALSE, $this->redis->sRemove($key, 'sValue1'));
+        $this->assertEquals(FALSE, $this->redis->sPop($key));
+        $this->assertEquals(FALSE, $this->redis->sMove($key, __FUNCTION__ . 'skey1', 'sValue1'));
+        $this->assertEquals(FALSE, $this->redis->sSize($key));
+        $this->assertEquals(FALSE, $this->redis->sContains($key, 'sValue1'));
+        $this->assertEquals(FALSE, $this->redis->sInter($key, __FUNCTION__ . 'skey2'));
+        $this->assertEquals(FALSE, $this->redis->sUnion($key, __FUNCTION__ . 'skey4'));
+        $this->assertEquals(FALSE, $this->redis->sDiff($key, __FUNCTION__ . 'skey7'));
+        $this->assertEquals(FALSE, $this->redis->sMembers($key));
+        $this->assertEquals(FALSE, $this->redis->sRandMember($key));
+
+        // sorted sets I/F
+        $this->assertEquals(FALSE, $this->redis->zAdd($key, 1, 'zValue1'));
+        $this->assertEquals(FALSE, $this->redis->zDelete($key, 'zValue1'));
+        $this->assertEquals(FALSE, $this->redis->zIncrBy($key, 1, 'zValue1'));
+        $this->assertEquals(FALSE, $this->redis->zRank($key, 'zValue1'));
+        $this->assertEquals(FALSE, $this->redis->zRevRank($key, 'zValue1'));
+        $this->assertEquals(FALSE, $this->redis->zRange($key, 0, -1));
+        $this->assertEquals(FALSE, $this->redis->zReverseRange($key, 0, -1));
+        $this->assertEquals(FALSE, $this->redis->zRangeByScore($key, 1, 2));
+        $this->assertEquals(FALSE, $this->redis->zCount($key, 0, -1));
+        $this->assertEquals(FALSE, $this->redis->zCard($key));
+        $this->assertEquals(FALSE, $this->redis->zScore($key, 'zValue1'));
+        $this->assertEquals(FALSE, $this->redis->zDeleteRangeByRank($key, 1, 2));
+        $this->assertEquals(FALSE, $this->redis->zDeleteRangeByScore($key, 1, 2));
+
+        // hash I/F
+        $this->assertEquals(FALSE, $this->redis->hSet($key, 'key1', 'value1'));
+        $this->assertEquals(FALSE, $this->redis->hGet($key, 'key1'));
+        $this->assertEquals(FALSE, $this->redis->hMGet($key, array('key1')));
+        $this->assertEquals(FALSE, $this->redis->hMSet($key, array('key1' => 'value1')));
+        $this->assertEquals(FALSE, $this->redis->hIncrBy($key, 'key2', 1));
+        $this->assertEquals(FALSE, $this->redis->hExists($key, 'key2'));
+        $this->assertEquals(FALSE, $this->redis->hDel($key, 'key2'));
+        $this->assertEquals(FALSE, $this->redis->hLen($key));
+        $this->assertEquals(FALSE, $this->redis->hKeys($key));
+        $this->assertEquals(FALSE, $this->redis->hVals($key));
+        $this->assertEquals(FALSE, $this->redis->hGetAll($key));
+    }
+
+    public function testDifferentTypeSet() {
+        $key = 'set';
+        $this->redis->del($key);
+        $this->assertEquals(1, $this->redis->sAdd($key, 'value'));
+
+        // string I/F
+        $this->assertEquals(FALSE, $this->redis->get($key));
+        $this->assertEquals(FALSE, $this->redis->getset($key, 'value2'));
+        $this->assertEquals(FALSE, $this->redis->append($key, 'append'));
+        $this->assertEquals(FALSE, $this->redis->substr($key, 0, 8));
+        $this->assertEquals(array(FALSE), $this->redis->mget(array($key)));
+        $this->assertEquals(FALSE, $this->redis->incr($key));
+        $this->assertEquals(FALSE, $this->redis->incrBy($key, 1));
+        $this->assertEquals(FALSE, $this->redis->decr($key));
+        $this->assertEquals(FALSE, $this->redis->decrBy($key, 1));
+
+        // lists I/F
+        $this->assertEquals(FALSE, $this->redis->rPush($key, 'lvalue'));
+        $this->assertEquals(FALSE, $this->redis->lPush($key, 'lvalue'));
+        $this->assertEquals(FALSE, $this->redis->lLen($key));
+        $this->assertEquals(FALSE, $this->redis->lPop($key));
+        $this->assertEquals(FALSE, $this->redis->lGetRange($key, 0, -1));
+        $this->assertEquals(FALSE, $this->redis->lTrim($key, 0, 1));
+        $this->assertEquals(FALSE, $this->redis->lGet($key, 0));
+        $this->assertEquals(FALSE, $this->redis->lSet($key, 0, "newValue"));
+        $this->assertEquals(FALSE, $this->redis->lRemove($key, 'lvalue', 1));
+        $this->assertEquals(FALSE, $this->redis->lPop($key));
+        $this->assertEquals(FALSE, $this->redis->rPop($key));
+        $this->assertEquals(FALSE, $this->redis->rPoplPush($key, __FUNCTION__ . 'lkey1'));
+
+        // sorted sets I/F
+        $this->assertEquals(FALSE, $this->redis->zAdd($key, 1, 'zValue1'));
+        $this->assertEquals(FALSE, $this->redis->zDelete($key, 'zValue1'));
+        $this->assertEquals(FALSE, $this->redis->zIncrBy($key, 1, 'zValue1'));
+        $this->assertEquals(FALSE, $this->redis->zRank($key, 'zValue1'));
+        $this->assertEquals(FALSE, $this->redis->zRevRank($key, 'zValue1'));
+        $this->assertEquals(FALSE, $this->redis->zRange($key, 0, -1));
+        $this->assertEquals(FALSE, $this->redis->zReverseRange($key, 0, -1));
+        $this->assertEquals(FALSE, $this->redis->zRangeByScore($key, 1, 2));
+        $this->assertEquals(FALSE, $this->redis->zCount($key, 0, -1));
+        $this->assertEquals(FALSE, $this->redis->zCard($key));
+        $this->assertEquals(FALSE, $this->redis->zScore($key, 'zValue1'));
+        $this->assertEquals(FALSE, $this->redis->zDeleteRangeByRank($key, 1, 2));
+        $this->assertEquals(FALSE, $this->redis->zDeleteRangeByScore($key, 1, 2));
+
+        // hash I/F
+        $this->assertEquals(FALSE, $this->redis->hSet($key, 'key1', 'value1'));
+        $this->assertEquals(FALSE, $this->redis->hGet($key, 'key1'));
+        $this->assertEquals(FALSE, $this->redis->hMGet($key, array('key1')));
+        $this->assertEquals(FALSE, $this->redis->hMSet($key, array('key1' => 'value1')));
+        $this->assertEquals(FALSE, $this->redis->hIncrBy($key, 'key2', 1));
+        $this->assertEquals(FALSE, $this->redis->hExists($key, 'key2'));
+        $this->assertEquals(FALSE, $this->redis->hDel($key, 'key2'));
+        $this->assertEquals(FALSE, $this->redis->hLen($key));
+        $this->assertEquals(FALSE, $this->redis->hKeys($key));
+        $this->assertEquals(FALSE, $this->redis->hVals($key));
+        $this->assertEquals(FALSE, $this->redis->hGetAll($key));
+    }
+
+    public function testDifferentTypeSortedSet() {
+        $key = 'sortedset';
+        $this->redis->del($key);
+        $this->assertEquals(1, $this->redis->zAdd($key, 0, 'value'));
+
+        // string I/F
+        $this->assertEquals(FALSE, $this->redis->get($key));
+        $this->assertEquals(FALSE, $this->redis->getset($key, 'value2'));
+        $this->assertEquals(FALSE, $this->redis->append($key, 'append'));
+        $this->assertEquals(FALSE, $this->redis->substr($key, 0, 8));
+        $this->assertEquals(array(FALSE), $this->redis->mget(array($key)));
+        $this->assertEquals(FALSE, $this->redis->incr($key));
+        $this->assertEquals(FALSE, $this->redis->incrBy($key, 1));
+        $this->assertEquals(FALSE, $this->redis->decr($key));
+        $this->assertEquals(FALSE, $this->redis->decrBy($key, 1));
+
+        // lists I/F
+        $this->assertEquals(FALSE, $this->redis->rPush($key, 'lvalue'));
+        $this->assertEquals(FALSE, $this->redis->lPush($key, 'lvalue'));
+        $this->assertEquals(FALSE, $this->redis->lLen($key));
+        $this->assertEquals(FALSE, $this->redis->lPop($key));
+        $this->assertEquals(FALSE, $this->redis->lGetRange($key, 0, -1));
+        $this->assertEquals(FALSE, $this->redis->lTrim($key, 0, 1));
+        $this->assertEquals(FALSE, $this->redis->lGet($key, 0));
+        $this->assertEquals(FALSE, $this->redis->lSet($key, 0, "newValue"));
+        $this->assertEquals(FALSE, $this->redis->lRemove($key, 'lvalue', 1));
+        $this->assertEquals(FALSE, $this->redis->lPop($key));
+        $this->assertEquals(FALSE, $this->redis->rPop($key));
+        $this->assertEquals(FALSE, $this->redis->rPoplPush($key, __FUNCTION__ . 'lkey1'));
+
+        // sets I/F
+        $this->assertEquals(FALSE, $this->redis->sAdd($key, 'sValue1'));
+        $this->assertEquals(FALSE, $this->redis->sRemove($key, 'sValue1'));
+        $this->assertEquals(FALSE, $this->redis->sPop($key));
+        $this->assertEquals(FALSE, $this->redis->sMove($key, __FUNCTION__ . 'skey1', 'sValue1'));
+        $this->assertEquals(FALSE, $this->redis->sSize($key));
+        $this->assertEquals(FALSE, $this->redis->sContains($key, 'sValue1'));
+        $this->assertEquals(FALSE, $this->redis->sInter($key, __FUNCTION__ . 'skey2'));
+        $this->assertEquals(FALSE, $this->redis->sUnion($key, __FUNCTION__ . 'skey4'));
+        $this->assertEquals(FALSE, $this->redis->sDiff($key, __FUNCTION__ . 'skey7'));
+        $this->assertEquals(FALSE, $this->redis->sMembers($key));
+        $this->assertEquals(FALSE, $this->redis->sRandMember($key));
+
+        // hash I/F
+        $this->assertEquals(FALSE, $this->redis->hSet($key, 'key1', 'value1'));
+        $this->assertEquals(FALSE, $this->redis->hGet($key, 'key1'));
+        $this->assertEquals(FALSE, $this->redis->hMGet($key, array('key1')));
+        $this->assertEquals(FALSE, $this->redis->hMSet($key, array('key1' => 'value1')));
+        $this->assertEquals(FALSE, $this->redis->hIncrBy($key, 'key2', 1));
+        $this->assertEquals(FALSE, $this->redis->hExists($key, 'key2'));
+        $this->assertEquals(FALSE, $this->redis->hDel($key, 'key2'));
+        $this->assertEquals(FALSE, $this->redis->hLen($key));
+        $this->assertEquals(FALSE, $this->redis->hKeys($key));
+        $this->assertEquals(FALSE, $this->redis->hVals($key));
+        $this->assertEquals(FALSE, $this->redis->hGetAll($key));
+    }
+
+    public function testDifferentTypeHash() {
+        $key = 'hash';
+        $this->redis->del($key);
+        $this->assertEquals(1, $this->redis->hSet($key, 'key', 'value'));
+
+        // string I/F
+        $this->assertEquals(FALSE, $this->redis->get($key));
+        $this->assertEquals(FALSE, $this->redis->getset($key, 'value2'));
+        $this->assertEquals(FALSE, $this->redis->append($key, 'append'));
+        $this->assertEquals(FALSE, $this->redis->substr($key, 0, 8));
+        $this->assertEquals(array(FALSE), $this->redis->mget(array($key)));
+        $this->assertEquals(FALSE, $this->redis->incr($key));
+        $this->assertEquals(FALSE, $this->redis->incrBy($key, 1));
+        $this->assertEquals(FALSE, $this->redis->decr($key));
+        $this->assertEquals(FALSE, $this->redis->decrBy($key, 1));
+
+        // lists I/F
+        $this->assertEquals(FALSE, $this->redis->rPush($key, 'lvalue'));
+        $this->assertEquals(FALSE, $this->redis->lPush($key, 'lvalue'));
+        $this->assertEquals(FALSE, $this->redis->lLen($key));
+        $this->assertEquals(FALSE, $this->redis->lPop($key));
+        $this->assertEquals(FALSE, $this->redis->lGetRange($key, 0, -1));
+        $this->assertEquals(FALSE, $this->redis->lTrim($key, 0, 1));
+        $this->assertEquals(FALSE, $this->redis->lGet($key, 0));
+        $this->assertEquals(FALSE, $this->redis->lSet($key, 0, "newValue"));
+        $this->assertEquals(FALSE, $this->redis->lRemove($key, 'lvalue', 1));
+        $this->assertEquals(FALSE, $this->redis->lPop($key));
+        $this->assertEquals(FALSE, $this->redis->rPop($key));
+        $this->assertEquals(FALSE, $this->redis->rPoplPush($key, __FUNCTION__ . 'lkey1'));
+
+        // sets I/F
+        $this->assertEquals(FALSE, $this->redis->sAdd($key, 'sValue1'));
+        $this->assertEquals(FALSE, $this->redis->sRemove($key, 'sValue1'));
+        $this->assertEquals(FALSE, $this->redis->sPop($key));
+        $this->assertEquals(FALSE, $this->redis->sMove($key, __FUNCTION__ . 'skey1', 'sValue1'));
+        $this->assertEquals(FALSE, $this->redis->sSize($key));
+        $this->assertEquals(FALSE, $this->redis->sContains($key, 'sValue1'));
+        $this->assertEquals(FALSE, $this->redis->sInter($key, __FUNCTION__ . 'skey2'));
+        $this->assertEquals(FALSE, $this->redis->sUnion($key, __FUNCTION__ . 'skey4'));
+        $this->assertEquals(FALSE, $this->redis->sDiff($key, __FUNCTION__ . 'skey7'));
+        $this->assertEquals(FALSE, $this->redis->sMembers($key));
+        $this->assertEquals(FALSE, $this->redis->sRandMember($key));
+
+        // sorted sets I/F
+        $this->assertEquals(FALSE, $this->redis->zAdd($key, 1, 'zValue1'));
+        $this->assertEquals(FALSE, $this->redis->zDelete($key, 'zValue1'));
+        $this->assertEquals(FALSE, $this->redis->zIncrBy($key, 1, 'zValue1'));
+        $this->assertEquals(FALSE, $this->redis->zRank($key, 'zValue1'));
+        $this->assertEquals(FALSE, $this->redis->zRevRank($key, 'zValue1'));
+        $this->assertEquals(FALSE, $this->redis->zRange($key, 0, -1));
+        $this->assertEquals(FALSE, $this->redis->zReverseRange($key, 0, -1));
+        $this->assertEquals(FALSE, $this->redis->zRangeByScore($key, 1, 2));
+        $this->assertEquals(FALSE, $this->redis->zCount($key, 0, -1));
+        $this->assertEquals(FALSE, $this->redis->zCard($key));
+        $this->assertEquals(FALSE, $this->redis->zScore($key, 'zValue1'));
+        $this->assertEquals(FALSE, $this->redis->zDeleteRangeByRank($key, 1, 2));
+        $this->assertEquals(FALSE, $this->redis->zDeleteRangeByScore($key, 1, 2));
     }
 
     public function testSerializerPHP() {
@@ -2510,12 +3775,14 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 
     public function testSerializerIGBinary() {
 
-	    $this->checkSerializer(Redis::SERIALIZER_IGBINARY);
+	    if(defined('Redis::SERIALIZER_IGBINARY')) {
+		    $this->checkSerializer(Redis::SERIALIZER_IGBINARY);
 
-	    // with prefix
-	    $this->redis->setOption(Redis::OPT_PREFIX, "test:");
-	    $this->checkSerializer(Redis::SERIALIZER_IGBINARY);
-	    $this->redis->setOption(Redis::OPT_PREFIX, "");
+		    // with prefix
+		    $this->redis->setOption(Redis::OPT_PREFIX, "test:");
+		    $this->checkSerializer(Redis::SERIALIZER_IGBINARY);
+		    $this->redis->setOption(Redis::OPT_PREFIX, "");
+	    }
     }
 
     private function checkSerializer($mode) {
@@ -2563,14 +3830,25 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	    $this->redis->delete('key');
 	    $s = array(1,'a', array(1,2,3), array('k' => 'v'));
 
-	    $this->assertTrue(TRUE === $this->redis->sAdd('key', $s[0]));
-	    $this->assertTrue(TRUE === $this->redis->sAdd('key', $s[1]));
-	    $this->assertTrue(TRUE === $this->redis->sAdd('key', $s[2]));
-	    $this->assertTrue(TRUE === $this->redis->sAdd('key', $s[3]));
+	    $this->assertTrue(1 === $this->redis->sAdd('key', $s[0]));
+	    $this->assertTrue(1 === $this->redis->sAdd('key', $s[1]));
+	    $this->assertTrue(1 === $this->redis->sAdd('key', $s[2]));
+	    $this->assertTrue(1 === $this->redis->sAdd('key', $s[3]));
+
+	    // variadic sAdd
+	    $this->redis->delete('k');
+	    $this->assertTrue(3 === $this->redis->sAdd('k', 'a', 'b', 'c'));
+	    $this->assertTrue(1 === $this->redis->sAdd('k', 'a', 'b', 'c', 'd'));
 
 	    // sRemove
-	    $this->assertTrue(TRUE === $this->redis->sRemove('key', $s[3]));
-	    $this->assertTrue(FALSE === $this->redis->sRemove('key', $s[3]));
+	    $this->assertTrue(1 === $this->redis->sRemove('key', $s[3]));
+	    $this->assertTrue(0 === $this->redis->sRemove('key', $s[3]));
+	    // variadic
+	    $this->redis->delete('k');
+	    $this->redis->sAdd('k', 'a', 'b', 'c', 'd');
+	    $this->assertTrue(2 === $this->redis->sRem('k', 'a', 'd'));
+	    $this->assertTrue(2 === $this->redis->sRem('k', 'b', 'c', 'e'));
+	    $this->assertTrue(FALSE === $this->redis->exists('k'));
 
 	    // sContains
 	    $this->assertTrue(TRUE === $this->redis->sContains('key', $s[0]));
@@ -2601,6 +3879,18 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	    $this->assertTrue(1 === $this->redis->zDelete('key', $z[3]));
 	    $this->assertTrue(0 === $this->redis->zDelete('key', $z[3]));
 	    unset($z[3]);
+
+		// check that zDelete doesn't crash with a missing parameter (GitHub issue #102):
+		$this->assertTrue(FALSE === @$this->redis->zDelete('key'));
+
+	    // variadic
+	    $this->redis->delete('k');
+	    $this->redis->zAdd('k', 0, 'a');
+	    $this->redis->zAdd('k', 1, 'b');
+	    $this->redis->zAdd('k', 2, 'c');
+	    $this->assertTrue(2 === $this->redis->zDelete('k', 'a', 'c'));
+	    $this->assertTrue(1.0 === $this->redis->zScore('k', 'b'));
+	    $this->assertTrue($this->redis->zRange('k', 0, -1, true) == array('b' => 1.0));
 
 	    // zRange
 	    $this->assertTrue($z === $this->redis->zRange('key', 0, -1));
@@ -2688,11 +3978,386 @@ class Redis_Test extends PHPUnit_Framework_TestCase
 	    // keys
 	    $this->assertTrue(is_array($this->redis->keys('*')));
 
+		// issue #62, hgetall
+		$this->redis->del('hash1');
+		$this->redis->hSet('hash1','data', 'test 1');
+		$this->redis->hSet('hash1','session_id', 'test 2');
+
+		$data = $this->redis->hGetAll('hash1');
+		$this->assertTrue($data['data'] === 'test 1');
+		$this->assertTrue($data['session_id'] === 'test 2');
+
+		// issue #145, serializer with objects.
+		$this->redis->set('x', array(new stdClass, new stdClass));
+		$x = $this->redis->get('x');
+		$this->assertTrue(is_array($x));
+		$this->assertTrue(is_object($x[0]) && get_class($x[0]) === 'stdClass');
+		$this->assertTrue(is_object($x[1]) && get_class($x[1]) === 'stdClass');
+
 	    // revert
 	    $this->assertTrue($this->redis->setOption(Redis::OPT_SERIALIZER, Redis::SERIALIZER_NONE) === TRUE); 	// set ok
 	    $this->assertTrue($this->redis->getOption(Redis::OPT_SERIALIZER) === Redis::SERIALIZER_NONE);		// get ok
     }
 
+    public function testDumpRestore() {
+
+		if (version_compare($this->version, "2.5.0", "lt")) {
+			$this->markTestSkipped();
+		}
+
+    	$this->redis->del('foo');
+    	$this->redis->del('bar');
+
+    	$this->redis->set('foo', 'this-is-foo');
+    	$this->redis->set('bar', 'this-is-bar');
+
+    	$d_foo = $this->redis->dump('foo');
+    	$d_bar = $this->redis->dump('bar');
+
+    	$this->redis->del('foo');
+    	$this->redis->del('bar');
+
+    	// Assert returns from restore
+    	$this->assertTrue($this->redis->restore('foo', 0, $d_bar));
+    	$this->assertTrue($this->redis->restore('bar', 0, $d_foo));
+
+    	// Now check that the keys have switched
+    	$this->assertTrue($this->redis->get('foo') === 'this-is-bar');
+    	$this->assertTrue($this->redis->get('bar') === 'this-is-foo');
+
+    	$this->redis->del('foo');
+    	$this->redis->del('bar');
+    }
+
+    public function testGetLastError() {
+    	// We shouldn't have any errors now
+    	$this->assertTrue($this->redis->getLastError() === NULL);
+
+    	// Throw some invalid lua at redis
+    	$this->redis->eval("not-a-lua-script");
+
+    	// Now we should have an error
+		$evalError = $this->redis->getLastError();
+		$this->assertTrue(strlen($evalError) > 0);
+
+		// test getLastError with a regular command
+		$this->redis->set('x', 'a');
+		$this->assertFalse($this->redis->incr('x'));
+		$incrError = $this->redis->getLastError();
+		$this->assertTrue($incrError !== $evalError); // error has changed
+		$this->assertTrue(strlen($incrError) > 0);
+
+		// clear error
+		$this->redis->clearLastError();
+		$this->assertTrue($this->redis->getLastError() === NULL);
+	}
+
+    // Helper function to compare nested results -- from the php.net array_diff page, I believe
+    private function array_diff_recursive($aArray1, $aArray2) {
+    	$aReturn = array();
+
+    	foreach ($aArray1 as $mKey => $mValue) {
+    		if (array_key_exists($mKey, $aArray2)) {
+    			if (is_array($mValue)) {
+    				$aRecursiveDiff = $this->array_diff_recursive($mValue, $aArray2[$mKey]);
+    				if (count($aRecursiveDiff)) {
+    					$aReturn[$mKey] = $aRecursiveDiff;
+    				}
+    			} else {
+    				if ($mValue != $aArray2[$mKey]) {
+    					$aReturn[$mKey] = $mValue;
+    				}
+    			}
+    		} else {
+    			$aReturn[$mKey] = $mValue;
+    		}
+    	}
+
+    	return $aReturn;
+    }
+
+    public function testScript() {
+
+		if (version_compare($this->version, "2.5.0", "lt")) {
+			$this->markTestSkipped();
+		}
+
+		// Flush any scripts we have
+		$this->assertTrue($this->redis->script('flush'));
+
+		// Silly scripts to test against
+		$s1_src = 'return 1';
+		$s1_sha = sha1($s1_src);
+		$s2_src = 'return 2';
+		$s2_sha = sha1($s2_src);
+		$s3_src = 'return 3';
+		$s3_sha = sha1($s3_src);
+
+    	// None should exist
+		$result = $this->redis->script('exists', $s1_sha, $s2_sha, $s3_sha);
+		$this->assertTrue(is_array($result) && count($result) == 3);
+		$this->assertTrue(is_array($result) && count(array_filter($result)) == 0);
+
+		// Load them up
+		$this->assertTrue($this->redis->script('load', $s1_src) == $s1_sha);
+		$this->assertTrue($this->redis->script('load', $s2_src) == $s2_sha);
+		$this->assertTrue($this->redis->script('load', $s3_src) == $s3_sha);
+
+		// They should all exist
+		$result = $this->redis->script('exists', $s1_sha, $s2_sha, $s3_sha);
+		$this->assertTrue(is_array($result) && count(array_filter($result)) == 3);
+    }
+
+    public function testEval() {
+
+		if (version_compare($this->version, "2.5.0", "lt")) {
+			$this->markTestSkipped();
+		}
+
+    	// Basic single line response tests
+    	$this->assertTrue(1 == $this->redis->eval('return 1'));
+    	$this->assertTrue(1.55 == $this->redis->eval("return '1.55'"));
+    	$this->assertTrue("hello, world" == $this->redis->eval("return 'hello, world'"));
+
+    	/*
+    	 * Keys to be incorporated into lua results
+    	 */
+
+		// Make a list
+		$this->redis->del('mylist');
+		$this->redis->rpush('mylist', 'a');
+		$this->redis->rpush('mylist', 'b');
+		$this->redis->rpush('mylist', 'c');
+
+		// Make a set
+		$this->redis->del('myset');
+		$this->redis->sadd('myset', 'd');
+		$this->redis->sadd('myset', 'e');
+		$this->redis->sadd('myset', 'f');
+
+		// Basic keys
+		$this->redis->set('key1', 'hello, world');
+		$this->redis->set('key2', 'hello again!');
+
+		// Use a script to return our list, and verify its response
+		$list = $this->redis->eval("return redis.call('lrange', 'mylist', 0, -1)");
+		$this->assertTrue($list === Array('a','b','c'));
+
+		// Use a script to return our set
+		$set = $this->redis->eval("return redis.call('smembers', 'myset')");
+		$this->assertTrue($set == Array('d','e','f'));
+
+		// Test an empty MULTI BULK response
+		$this->redis->del('not-any-kind-of-list');
+		$empty_resp = $this->redis->eval("return redis.call('lrange', 'not-any-kind-of-list', 0, -1)");
+		$this->assertTrue(is_array($empty_resp) && empty($empty_resp));
+
+		// Now test a nested reply
+		$nested_script = "
+			return {
+				1,2,3, {
+					redis.call('get', 'key1'),
+					redis.call('get', 'key2'),
+					redis.call('lrange', 'not-any-kind-of-list', 0, -1),
+					{
+						redis.call('smembers','myset'),
+						redis.call('lrange', 'mylist', 0, -1)
+					}
+				}
+			}
+		";
+
+		$expected = Array(
+			1, 2, 3, Array(
+				'hello, world',
+				'hello again!',
+				Array(),
+				Array(
+					Array('d','e','f'),
+					Array('a','b','c')
+				)
+			)
+		);
+
+		// Now run our script, and check our values against each other
+		$eval_result = $this->redis->eval($nested_script);
+		$this->assertTrue(is_array($eval_result) && count($this->array_diff_recursive($eval_result, $expected)) == 0);
+
+		/*
+		 * Nested reply wihin a multi/pipeline block
+		 */
+
+		$num_scripts = 10;
+
+		foreach(Array(Redis::PIPELINE, Redis::MULTI) as $mode) {
+			$this->redis->multi($mode);
+			for($i=0;$i<$num_scripts;$i++) {
+				$this->redis->eval($nested_script);
+			}
+			$replies = $this->redis->exec();
+
+			foreach($replies as $reply) {
+				$this->assertTrue(is_array($reply) && count($this->array_diff_recursive($reply, $expected)) == 0);
+			}
+		}
+
+		/*
+		 * KEYS/ARGV
+		 */
+
+		$args_script = "return {KEYS[1],KEYS[2],KEYS[3],ARGV[1],ARGV[2],ARGV[3]}";
+		$args_args   = Array('k1','k2','k3','v1','v2','v3');
+		$args_result = $this->redis->eval($args_script, $args_args, 3);
+		$this->assertTrue($args_result === $args_args);
+
+		// turn on key prefixing
+		$this->redis->setOption(Redis::OPT_PREFIX, 'prefix:');
+		$args_result = $this->redis->eval($args_script, $args_args, 3);
+
+		// Make sure our first three are prefixed
+		for($i=0;$i<count($args_result);$i++) {
+			if($i<3) {
+				// Should be prefixed
+				$this->assertTrue($args_result[$i] == 'prefix:' . $args_args[$i]);
+			} else {
+				// Should not be prefixed
+				$this->assertTrue($args_result[$i] == $args_args[$i]);
+			}
+		}
+    }
+
+    public function testEvalSHA() {
+
+		if (version_compare($this->version, "2.5.0", "lt")) {
+			$this->markTestSkipped();
+		}
+
+    	// Flush any loaded scripts
+    	$this->redis->script('flush');
+
+    	// Non existant script (but proper sha1), and a random (not) sha1 string
+    	$this->assertFalse($this->redis->evalsha(sha1(uniqid())));
+    	$this->assertFalse($this->redis->evalsha('some-random-data'));
+
+    	// Load a script
+    	$cb  = uniqid(); // To ensure the script is new
+    	$scr = "local cb='$cb' return 1";
+    	$sha = sha1($scr);
+
+    	// Run it when it doesn't exist, run it with eval, and then run it with sha1
+    	$this->assertTrue(false === $this->redis->evalsha($scr));
+    	$this->assertTrue(1 === $this->redis->eval($scr));
+    	$this->assertTrue(1 === $this->redis->evalsha($sha));
+    }
+
+    public function testUnserialize() {
+    	$vals = Array(
+    		1,1.5,'one',Array('this','is','an','array')
+    	);
+
+    	$serializers = Array(Redis::SERIALIZER_PHP);
+    	if(defined('Redis::SERIALIZER_IGBINARY')) {
+    		$serializers[] = Redis::SERIALIZER_IGBINARY;
+    	}
+
+    	foreach($serializers as $mode) {
+    		$vals_enc = Array();
+
+    		// Pass them through redis so they're serialized
+    		foreach($vals as $key => $val) {
+    			$this->redis->setOption(Redis::OPT_SERIALIZER, $mode);
+
+    			$key = "key" . ++$key;
+    			$this->redis->del($key);
+    			$this->redis->set($key, $val);
+
+    			// Clear serializer, get serialized value
+    			$this->redis->setOption(Redis::OPT_SERIALIZER, Redis::SERIALIZER_NONE);
+    			$vals_enc[] = $this->redis->get($key);
+    		}
+
+    		// Run through our array comparing values
+    		for($i=0;$i<count($vals);$i++) {
+    			// reset serializer
+    			$this->redis->setOption(Redis::OPT_SERIALIZER, $mode);
+    			$this->assertTrue($vals[$i] == $this->redis->_unserialize($vals_enc[$i]));
+    			$this->redis->setOption(Redis::OPT_SERIALIZER, Redis::SERIALIZER_NONE);
+    		}
+    	}
+    }
+
+    public function testPrefix() {
+    	// no prefix
+    	$this->redis->setOption(Redis::OPT_PREFIX, '');
+    	$this->assertTrue('key' == $this->redis->_prefix('key'));
+
+    	// with a prefix
+    	$this->redis->setOption(Redis::OPT_PREFIX, 'some-prefix:');
+    	$this->assertTrue('some-prefix:key' == $this->redis->_prefix('key'));
+
+    	// Clear prefix
+    	$this->redis->setOption(Redis::OPT_PREFIX, '');
+
+    }
+
+	public function testReconnectSelect() {
+		$key = 'reconnect-select';
+		$value = 'Has been set!';
+
+		$original_cfg = $this->redis->config('GET', 'timeout');
+
+		// Make sure the default DB doesn't have the key.
+		$this->redis->select(0);
+		$this->redis->delete($key);
+
+		// Set the key on a different DB.
+		$this->redis->select(5);
+		$this->redis->set($key, $value);
+
+		// Time out after 1 second.
+		$this->redis->config('SET', 'timeout', '1');
+
+		// Wait for the timeout. With Redis 2.4, we have to wait up to 10 s
+		// for the server to close the connection, regardless of the timeout
+		// setting.
+		sleep(11);
+
+		// Make sure we're still using the same DB.
+		$this->assertEquals($value, $this->redis->get($key));
+
+		// Revert the setting.
+		$this->redis->config('SET', 'timeout', $original_cfg['timeout']);
+	}
+
+	public function testTime() {
+
+		if (version_compare($this->version, "2.5.0", "lt")) {
+			$this->markTestSkipped();
+		}
+
+		$time_arr = $this->redis->time();
+		$this->assertTrue(is_array($time_arr) && count($time_arr) == 2 &&
+				          strval(intval($time_arr[0])) === strval($time_arr[0]) &&
+						  strval(intval($time_arr[1])) === strval($time_arr[1]));
+	}
+
+	public function testReadTimeoutOption() {
+
+		$this->assertTrue(defined('Redis::OPT_READ_TIMEOUT'));
+
+		$this->redis->setOption(Redis::OPT_READ_TIMEOUT, "12.3");
+		$this->assertEquals(12.3, $this->redis->getOption(Redis::OPT_READ_TIMEOUT));
+	}
+
+    public function testIntrospection() {
+        // Simple introspection tests
+        $this->assertTrue($this->redis->getHost() === self::HOST);
+        $this->assertTrue($this->redis->getPort() === self::PORT);
+        $this->assertTrue($this->redis->getAuth() === self::AUTH);
+    }
+
 }
+
+exit(TestSuite::run("Redis_Test"));
 
 ?>

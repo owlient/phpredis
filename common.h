@@ -1,5 +1,6 @@
 #include "php.h"
 #include "php_ini.h"
+#include <ext/standard/php_smart_str.h>
 
 #ifndef REDIS_COMMON_H
 #define REDIS_COMMON_H
@@ -22,9 +23,19 @@
 #define REDIS_ZSET 4
 #define REDIS_HASH 5
 
+/* reply types */
+typedef enum _REDIS_REPLY_TYPE {
+	TYPE_LINE      = '+',
+	TYPE_INT       = ':',
+	TYPE_ERR       = '-',
+	TYPE_BULK      = '$',
+	TYPE_MULTIBULK = '*'
+} REDIS_REPLY_TYPE;
+
 /* options */
 #define REDIS_OPT_SERIALIZER		1
-#define REDIS_OPT_PREFIX		2
+#define REDIS_OPT_PREFIX		    2
+#define REDIS_OPT_READ_TIMEOUT		3
 
 /* serializers */
 #define REDIS_SERIALIZER_NONE		0
@@ -52,21 +63,23 @@
 
 
 #define MULTI_RESPONSE(callback) IF_MULTI_OR_PIPELINE() { \
-	fold_item *f1 = malloc(sizeof(fold_item)); \
+	fold_item *f1, *current; \
+	f1 = malloc(sizeof(fold_item)); \
 	f1->fun = (void *)callback; \
 	f1->next = NULL; \
-	fold_item *current = redis_sock->current;\
+	current = redis_sock->current;\
 	if(current) current->next = f1; \
 	redis_sock->current = f1; \
   }
 
 #define PIPELINE_ENQUEUE_COMMAND(cmd, cmd_len) request_item *tmp; \
+	struct request_item *current_request;\
 	tmp = malloc(sizeof(request_item));\
 	tmp->request_str = calloc(cmd_len, 1);\
 	memcpy(tmp->request_str, cmd, cmd_len);\
 	tmp->request_size = cmd_len;\
 	tmp->next = NULL;\
-	struct request_item *current_request = redis_sock->pipeline_current; \
+	current_request = redis_sock->pipeline_current; \
 	if(current_request) {\
 		current_request->next = tmp;\
 	} \
@@ -81,11 +94,12 @@
 }
 
 #define REDIS_SAVE_CALLBACK(callback, closure_context) IF_MULTI_OR_PIPELINE() { \
-	fold_item *f1 = malloc(sizeof(fold_item)); \
+	fold_item *f1, *current; \
+	f1 = malloc(sizeof(fold_item)); \
 	f1->fun = (void *)callback; \
 	f1->ctx = closure_context; \
 	f1->next = NULL; \
-	fold_item *current = redis_sock->current;\
+	current = redis_sock->current;\
 	if(current) current->next = f1; \
 	redis_sock->current = f1; \
 	if(NULL == redis_sock->head) { \
@@ -143,12 +157,18 @@ typedef struct {
     php_stream     *stream;
     char           *host;
     short          port;
+    char           *auth;
     double         timeout;
+    double         read_timeout;
+    long           retry_interval;
     int            failed;
     int            status;
     int            persistent;
+    int            watching;
+    char           *persistent_id;
 
     int            serializer;
+    long           dbNumber;
 
     char           *prefix;
     int            prefix_len;
@@ -159,6 +179,9 @@ typedef struct {
 
     request_item   *pipeline_head;
     request_item   *pipeline_current;
+
+    char           *err;
+    int            err_len;
 } RedisSock;
 /* }}} */
 
