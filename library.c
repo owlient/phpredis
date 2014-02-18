@@ -173,16 +173,6 @@ PHPAPI char *redis_sock_read(RedisSock *redis_sock, int *buf_len TSRMLS_DC)
     return NULL;
 }
 
-void add_constant_long(zend_class_entry *ce, char *name, int value) {
-
-    zval *constval;
-    constval = pemalloc(sizeof(zval), 1);
-    INIT_PZVAL(constval);
-    ZVAL_LONG(constval, value);
-    zend_hash_add(&ce->constants_table, name, 1 + strlen(name),
-        (void*)&constval, sizeof(zval*), NULL);
-}
-
 int
 integer_length(int i) {
     int sz = 0;
