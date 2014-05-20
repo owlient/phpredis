@@ -1329,12 +1329,13 @@ PHP_METHOD(Redis, strlen)
 
 PHPAPI void
 generic_push_function(INTERNAL_FUNCTION_PARAMETERS, char *keyword, int keyword_len) {
-    zval *object;
+    zval *object, **data;
     RedisSock *redis_sock;
     char *cmd, *key, *val;
     int cmd_len, key_len, val_len;
     zval *z_value;
     int val_free, key_free = 0;
+    int elements = 1;
 
     if (zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(), "Osz",
                                      &object, redis_ce,
@@ -1346,17 +1347,66 @@ generic_push_function(INTERNAL_FUNCTION_PARAMETERS, char *keyword, int keyword_l
         RETURN_FALSE;
     }
 
-    val_free = redis_serialize(redis_sock, z_value, &val, &val_len TSRMLS_CC);
-	key_free = redis_key_prefix(redis_sock, &key, &key_len);
-    cmd_len = redis_cmd_format_static(&cmd, keyword, "ss", key, key_len, val, val_len);
-    if(val_free) efree(val);
+    key_free = redis_key_prefix(redis_sock, &key, &key_len);
+    cmd_len = redis_cmd_format(&cmd, "$%d" _NL "%s" _NL "$%d" _NL "%s", keyword_len, keyword, keyword_len, key_len, key, key_len);
     if(key_free) efree(key);
+    char *old_cmd = NULL;
 
-	REDIS_PROCESS_REQUEST(redis_sock, cmd, cmd_len);
-	IF_ATOMIC() {
-		redis_long_response(INTERNAL_FUNCTION_PARAM_PASSTHRU, redis_sock, NULL, NULL);
-	}
-	REDIS_PROCESS_RESPONSE(redis_long_response);
+    if (Z_TYPE_P(z_value) == IS_ARRAY){
+        HashTable *arr_hash;
+        HashPosition pointer;
+        int array_count;
+        arr_hash    = Z_ARRVAL_P(z_value);
+        array_count = zend_hash_num_elements(arr_hash);
+
+        if (array_count == 0) {
+            RETURN_FALSE;
+        }
+
+        for (zend_hash_internal_pointer_reset_ex(arr_hash, &pointer);
+                zend_hash_get_current_data_ex(arr_hash, (void**) &data,
+                    &pointer) == SUCCESS;
+                zend_hash_move_forward_ex(arr_hash, &pointer)) {
+
+            if(*cmd) {
+                old_cmd = cmd;
+            }
+
+            val_free = redis_serialize(redis_sock, *data, &val, &val_len TSRMLS_CC);
+            cmd_len = redis_cmd_format(&cmd, "%s" _NL "$%d" _NL "%s", old_cmd, cmd_len, val_len, val, val_len);
+            if(val_free) efree(val);
+
+            if(old_cmd) {
+                efree(old_cmd);
+            }
+            elements++;
+        }
+
+    } else {
+        elements++;
+        if(*cmd) {
+            old_cmd = cmd;
+        }
+        val_free = redis_serialize(redis_sock, z_value, &val, &val_len TSRMLS_CC);
+        cmd_len = redis_cmd_format(&cmd, "%s" _NL "$%d" _NL "%s", old_cmd, cmd_len, val_len, val, val_len);
+        if(old_cmd) {
+            efree(old_cmd);
+        }
+        if(val_free) efree(val);
+    }
+    if(*cmd) {
+        old_cmd = cmd;
+    }
+    cmd_len = redis_cmd_format(&cmd, "*%d" _NL "%s" _NL, elements + 1, old_cmd, cmd_len);
+    if(old_cmd) {
+        efree(old_cmd);
+    }
+
+    REDIS_PROCESS_REQUEST(redis_sock, cmd, cmd_len);
+    IF_ATOMIC() {
+        redis_long_response(INTERNAL_FUNCTION_PARAM_PASSTHRU, redis_sock, NULL, NULL);
+    }
+    REDIS_PROCESS_RESPONSE(redis_long_response);
 }
 
 /* {{{ proto boolean Redis::lPush(string key , string value)
