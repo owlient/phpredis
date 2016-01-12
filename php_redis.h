@@ -14,6 +14,7 @@
   +----------------------------------------------------------------------+
   | Original author: Alfonso Jimenez <yo@alfonsojimenez.com>             |
   | Maintainer: Nicolas Favre-Felix <n.favre-felix@owlient.eu>           |
+  | Maintainer: Michael Grunder <michael.grunder@gmail.com>              |
   | Maintainer: Nasreddine Bouafif <n.bouafif@owlient.eu>                |
   +----------------------------------------------------------------------+
 */
@@ -23,14 +24,20 @@
 #ifndef PHP_REDIS_H
 #define PHP_REDIS_H
 
+/* phpredis version */
+#define PHP_REDIS_VERSION "2.2.8-dev"
+
 PHP_METHOD(Redis, __construct);
+PHP_METHOD(Redis, __destruct);
 PHP_METHOD(Redis, connect);
 PHP_METHOD(Redis, pconnect);
 PHP_METHOD(Redis, close);
 PHP_METHOD(Redis, ping);
+PHP_METHOD(Redis, echo);
 PHP_METHOD(Redis, get);
 PHP_METHOD(Redis, set);
 PHP_METHOD(Redis, setex);
+PHP_METHOD(Redis, psetex);
 PHP_METHOD(Redis, setnx);
 PHP_METHOD(Redis, getSet);
 PHP_METHOD(Redis, randomKey);
@@ -41,6 +48,7 @@ PHP_METHOD(Redis, exists);
 PHP_METHOD(Redis, delete);
 PHP_METHOD(Redis, incr);
 PHP_METHOD(Redis, incrBy);
+PHP_METHOD(Redis, incrByFloat);
 PHP_METHOD(Redis, decr);
 PHP_METHOD(Redis, decrBy);
 PHP_METHOD(Redis, type);
@@ -72,6 +80,7 @@ PHP_METHOD(Redis, lGetRange);
 PHP_METHOD(Redis, lSet);
 PHP_METHOD(Redis, lInsert);
 PHP_METHOD(Redis, sAdd);
+PHP_METHOD(Redis, sAddArray);
 PHP_METHOD(Redis, sSize);
 PHP_METHOD(Redis, sRemove);
 PHP_METHOD(Redis, sMove);
@@ -86,6 +95,7 @@ PHP_METHOD(Redis, sUnionStore);
 PHP_METHOD(Redis, sDiff);
 PHP_METHOD(Redis, sDiffStore);
 PHP_METHOD(Redis, setTimeout);
+PHP_METHOD(Redis, pexpire);
 PHP_METHOD(Redis, save);
 PHP_METHOD(Redis, bgSave);
 PHP_METHOD(Redis, lastSave);
@@ -94,6 +104,7 @@ PHP_METHOD(Redis, flushAll);
 PHP_METHOD(Redis, dbSize);
 PHP_METHOD(Redis, auth);
 PHP_METHOD(Redis, ttl);
+PHP_METHOD(Redis, pttl);
 PHP_METHOD(Redis, persist);
 PHP_METHOD(Redis, info);
 PHP_METHOD(Redis, select);
@@ -101,9 +112,14 @@ PHP_METHOD(Redis, move);
 PHP_METHOD(Redis, zAdd);
 PHP_METHOD(Redis, zDelete);
 PHP_METHOD(Redis, zRange);
-PHP_METHOD(Redis, zReverseRange);
+PHP_METHOD(Redis, zRevRange);
 PHP_METHOD(Redis, zRangeByScore);
+PHP_METHOD(Redis, zRangeByLex);
 PHP_METHOD(Redis, zRevRangeByScore);
+PHP_METHOD(Redis, zRangeByLex);
+PHP_METHOD(Redis, zRevRangeByLex);
+PHP_METHOD(Redis, zRemRangeByLex);
+PHP_METHOD(Redis, zLexCount);
 PHP_METHOD(Redis, zCount);
 PHP_METHOD(Redis, zDeleteRangeByScore);
 PHP_METHOD(Redis, zDeleteRangeByRank);
@@ -115,12 +131,35 @@ PHP_METHOD(Redis, zIncrBy);
 PHP_METHOD(Redis, zInter);
 PHP_METHOD(Redis, zUnion);
 PHP_METHOD(Redis, expireAt);
+PHP_METHOD(Redis, pexpireAt);
 PHP_METHOD(Redis, bgrewriteaof);
 PHP_METHOD(Redis, slaveof);
+PHP_METHOD(Redis, object);
+PHP_METHOD(Redis, bitop);
+PHP_METHOD(Redis, bitcount);
+PHP_METHOD(Redis, bitpos);
+
+PHP_METHOD(Redis, eval);
+PHP_METHOD(Redis, evalsha);
+PHP_METHOD(Redis, script);
+PHP_METHOD(Redis, debug);
+PHP_METHOD(Redis, dump);
+PHP_METHOD(Redis, restore);
+PHP_METHOD(Redis, migrate);
+
+PHP_METHOD(Redis, time);
+PHP_METHOD(Redis, role);
+
+PHP_METHOD(Redis, getLastError);
+PHP_METHOD(Redis, clearLastError);
+PHP_METHOD(Redis, _prefix);
+PHP_METHOD(Redis, _serialize);
+PHP_METHOD(Redis, _unserialize);
 
 PHP_METHOD(Redis, mset);
 PHP_METHOD(Redis, msetnx);
 PHP_METHOD(Redis, rpoplpush);
+PHP_METHOD(Redis, brpoplpush);
 
 PHP_METHOD(Redis, hGet);
 PHP_METHOD(Redis, hSet);
@@ -132,6 +171,7 @@ PHP_METHOD(Redis, hVals);
 PHP_METHOD(Redis, hGetAll);
 PHP_METHOD(Redis, hExists);
 PHP_METHOD(Redis, hIncrBy);
+PHP_METHOD(Redis, hIncrByFloat);
 PHP_METHOD(Redis, hMset);
 PHP_METHOD(Redis, hMget);
 
@@ -145,16 +185,43 @@ PHP_METHOD(Redis, pipeline);
 
 PHP_METHOD(Redis, publish);
 PHP_METHOD(Redis, subscribe);
+PHP_METHOD(Redis, psubscribe);
 PHP_METHOD(Redis, unsubscribe);
+PHP_METHOD(Redis, punsubscribe);
 
 PHP_METHOD(Redis, getOption);
 PHP_METHOD(Redis, setOption);
 
-#ifdef PHP_WIN32
-#define PHP_REDIS_API __declspec(dllexport)
-#else
-#define PHP_REDIS_API
-#endif
+PHP_METHOD(Redis, config);
+PHP_METHOD(Redis, slowlog);
+PHP_METHOD(Redis, wait);
+PHP_METHOD(Redis, pubsub);
+
+PHP_METHOD(Redis, client);
+PHP_METHOD(Redis, command);
+PHP_METHOD(Redis, rawcommand);
+
+/* SCAN and friends  */
+PHP_METHOD(Redis, scan);
+PHP_METHOD(Redis, hscan);
+PHP_METHOD(Redis, sscan);
+PHP_METHOD(Redis, zscan);
+
+/* HyperLogLog commands */
+PHP_METHOD(Redis, pfadd);
+PHP_METHOD(Redis, pfcount);
+PHP_METHOD(Redis, pfmerge);
+
+/* Reflection */
+PHP_METHOD(Redis, getHost);
+PHP_METHOD(Redis, getPort);
+PHP_METHOD(Redis, getDBNum);
+PHP_METHOD(Redis, getTimeout);
+PHP_METHOD(Redis, getReadTimeout);
+PHP_METHOD(Redis, isConnected);
+PHP_METHOD(Redis, getPersistentID);
+PHP_METHOD(Redis, getAuth);
+PHP_METHOD(Redis, getMode);
 
 #ifdef ZTS
 #include "TSRM.h"
@@ -166,49 +233,55 @@ PHP_RINIT_FUNCTION(redis);
 PHP_RSHUTDOWN_FUNCTION(redis);
 PHP_MINFO_FUNCTION(redis);
 
-PHPAPI int redis_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent);
-PHPAPI void redis_atomic_increment(INTERNAL_FUNCTION_PARAMETERS, char *keyword, int count);
-PHPAPI int generic_multiple_args_cmd(INTERNAL_FUNCTION_PARAMETERS, char *keyword, int keyword_len,
-									 int min_argc, RedisSock **redis_sock, int has_timeout);
-PHPAPI void generic_sort_cmd(INTERNAL_FUNCTION_PARAMETERS, char *sort, int use_alpha);
-PHPAPI void generic_empty_cmd(INTERNAL_FUNCTION_PARAMETERS, char *cmd, int cmd_len, ...);
-PHPAPI void generic_empty_long_cmd(INTERNAL_FUNCTION_PARAMETERS, char *cmd, int cmd_len, ...);
+/* Redis response handler function callback prototype */
+typedef void (*ResultCallback)(INTERNAL_FUNCTION_PARAMETERS, 
+    RedisSock *redis_sock, zval *z_tab, void *ctx);
 
-PHPAPI void array_zip_values_and_scores(RedisSock *redis_sock, zval *z_tab, int use_atof TSRMLS_DC);
-PHPAPI int redis_response_enqueued(RedisSock *redis_sock TSRMLS_DC);
+PHP_REDIS_API int redis_connect(INTERNAL_FUNCTION_PARAMETERS, int persistent);
 
-PHPAPI int get_flag(zval *object TSRMLS_DC);
-PHPAPI void set_flag(zval *object, int new_flag TSRMLS_DC);
+PHP_REDIS_API void generic_sort_cmd(INTERNAL_FUNCTION_PARAMETERS, char *sort, 
+    int use_alpha);
 
-PHPAPI int redis_sock_read_multibulk_multi_reply_loop(INTERNAL_FUNCTION_PARAMETERS, RedisSock *redis_sock, zval *z_tab, int numElems);
+PHP_REDIS_API void generic_subscribe_cmd(INTERNAL_FUNCTION_PARAMETERS, char *sub_cmd);
+
+PHP_REDIS_API void generic_unsubscribe_cmd(INTERNAL_FUNCTION_PARAMETERS, 
+    char *unsub_cmd);
+
+PHP_REDIS_API int redis_response_enqueued(RedisSock *redis_sock TSRMLS_DC);
+
+PHP_REDIS_API int get_flag(zval *object TSRMLS_DC);
+
+PHP_REDIS_API void set_flag(zval *object, int new_flag TSRMLS_DC);
+
+PHP_REDIS_API int redis_sock_read_multibulk_multi_reply_loop(
+    INTERNAL_FUNCTION_PARAMETERS, RedisSock *redis_sock, zval *z_tab, 
+    int numElems);
 
 /* pipeline */
-PHPAPI request_item* get_pipeline_head(zval *object);
-PHPAPI void set_pipeline_head(zval *object, request_item *head);
-PHPAPI request_item* get_pipeline_current(zval *object);
-PHPAPI void set_pipeline_current(zval *object, request_item *current);
+PHP_REDIS_API request_item* get_pipeline_head(zval *object);
+PHP_REDIS_API void set_pipeline_head(zval *object, request_item *head);
+PHP_REDIS_API request_item* get_pipeline_current(zval *object);
+PHP_REDIS_API void set_pipeline_current(zval *object, request_item *current);
 
+#ifndef _MSC_VER
 ZEND_BEGIN_MODULE_GLOBALS(redis)
 ZEND_END_MODULE_GLOBALS(redis)
-
+#endif
 
 struct redis_queued_item {
+    /* reading function */
+    zval * (*fun)(INTERNAL_FUNCTION_PARAMETERS, RedisSock *redis_sock, ...);
 
-	/* reading function */
-	zval * (*fun)(INTERNAL_FUNCTION_PARAMETERS, RedisSock *redis_sock, ...);
+    char *cmd; 
+    int cmd_len;
 
-	char *cmd; 
-	int cmd_len;
-
-	struct redis_queued_item *next;
+    struct redis_queued_item *next;
 };
 
 extern zend_module_entry redis_module_entry;
+
 #define redis_module_ptr &redis_module_entry
-
 #define phpext_redis_ptr redis_module_ptr
-
-#define PHP_REDIS_VERSION "2.1.0"
 
 #endif
 
